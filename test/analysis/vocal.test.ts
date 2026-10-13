@@ -37,6 +37,18 @@ describe('extractVocalNotes', () => {
     expect(Math.round(long[0].midi)).toBe(72);
   });
 
+  it('starts a note at its consonant, not when the pitch settles', () => {
+    const pcm = silence(2);
+    let seed = 9;
+    const r = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x3fffffff - 1);
+    const s0 = Math.round(0.5 * SR);
+    for (let i = 0; i < 0.05 * SR; i++) pcm[s0 + i] += 0.25 * r() * Math.min(1, i / 40); // "t" burst
+    tone(pcm, 0.55, 65, 0.6, 0.15);
+    const n = extractVocalNotes(pcm, SR);
+    expect(n.length).toBe(1);
+    expect(Math.abs(n[0].t - 0.5)).toBeLessThanOrEqual(0.02);
+  });
+
   it('returns nothing for silence and noise-free short input', () => {
     expect(extractVocalNotes(silence(3), SR)).toEqual([]);
     expect(extractVocalNotes(new Float32Array(500), SR)).toEqual([]);

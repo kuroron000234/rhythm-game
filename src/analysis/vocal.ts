@@ -119,7 +119,23 @@ export function extractVocalNotes(pcm: Float32Array, sr: number): VocalNote[] {
     c.n++;
   }
   close(nF);
-  return cleanUp(notes);
+  return cleanUp(notes).map((n) => refineOnset(n, rms, sr));
+}
+
+/** Moves a note's start to the strongest energy rise just before it — the consonant/attack. */
+function refineOnset(n: VocalNote, rms: Float32Array, sr: number): VocalNote {
+  const { hop: HOP, win: W } = VOCAL;
+  const frameOf = (t: number) => Math.round((t * sr - W / 2) / HOP);
+  const a = Math.max(1, frameOf(n.t - VOCAL.attackLookback)), b = Math.min(rms.length - 1, frameOf(n.t + VOCAL.attackLookahead));
+  let best = -1, rise = 0;
+  for (let f = a; f <= b; f++) {
+    const d = Math.log(rms[f] + 1e-6) - Math.log(rms[f - 1] + 1e-6);
+    if (d > rise) { rise = d; best = f; }
+  }
+  if (best < 0 || rise < 0.3) return n;
+  // the rise between frames f-1 and f is centred half a hop before frame f's centre
+  const t = (best * HOP + W / 2 - HOP / 2) / sr;
+  return t < n.t ? { ...n, t, dur: n.dur + (n.t - t) } : n;
 }
 
 function cleanUp(notes: VocalNote[]): VocalNote[] {

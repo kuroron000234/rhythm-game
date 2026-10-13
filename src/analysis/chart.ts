@@ -4,10 +4,11 @@ import { percentile } from './onsets.ts';
 import type { Grid } from './tempo.ts';
 import { hashSeed, makeRng } from './rng.ts';
 import { computeSections, densityFactor, sectionAt, type Section } from './sections.ts';
+import type { VocalNote } from './vocal.ts';
 import {
   BEAT_HEAD_BONUS, CHART_VERSION, CRITICAL_MIN_GAP_BEATS, CRITICAL_SHARE, DIFFICULTY, HOLD_MAX_BEATS,
   HOLD_MAX_SHARE, HOLD_MIN_BEATS, HOLD_MIN_LOUDNESS, HOLD_REF_DELAY, HOLD_SUSTAIN_RATIO, SNAP_TOLERANCE,
-  CHORD_STRONG, CHORD_STRONG_MULT, CHORD_WEAK, CRITICAL_MIN_STRENGTH,
+  CHORD_STRONG, CHORD_STRONG_MULT, CHORD_WEAK, CRITICAL_MIN_STRENGTH, AI, DENSITY_MAX_FACTOR,
 } from './params.ts';
 
 export type Difficulty = 'easy' | 'normal' | 'hard';
@@ -33,13 +34,15 @@ interface Candidate {
   t: number;
   score: number;
   band: 0 | 1 | 2;
-  /** Slot subdivision, or -1 when the grid is unreliable. */
+  /** Slot subdivision; -1 when the grid is unreliable, -2 for a sung note kept off the grid. */
   sub: number;
   beat: number;
   /** Local beat length in seconds. */
   beatLen: number;
   dur?: number;
   chord?: boolean;
+  /** Length of the sung note this candidate came from (AI charts). */
+  sung?: number;
 }
 
 const round3 = (x: number) => Math.round(x * 1000) / 1000;
@@ -85,8 +88,65 @@ function candidates(onsets: Onset[], grid: Grid, subs: number[]): Candidate[] {
     .sort((a, b) => a.t - b.t);
 }
 
+/** One candidate per sung note, snapped to the grid like onsets but with a wider tolerance. */
+function vocalCandidates(vocals: VocalNote[], grid: Grid, subs: number[]): Candidate[] {
+  const out: Candidate[] = [];
+  const slots = grid.slots;
+  let k = 0;
+  for (const v of vocals) {
+    if (v.level < AI.vocalMinLevel) continue;
+    const score = AI.vocalBase + AI.vocalLevel * v.level;
+    if (!grid.reliable) {
+      const beatLen = 60 / grid.bpm;
+      out.push({ t: v.t, score, band: 1, sub: -1, beat: Math.floor(v.t / beatLen), beatLen, sung: v.dur });
+      continue;
+    }
+    while (k + 1 < slots.length && Math.abs(slots[k + 1].t - v.t) <= Math.abs(slots[k].t - v.t)) k++;
+    const s = slots[k];
+    if (!s) continue;
+    const beatLen = (grid.beats[s.beat + 1] ?? s.t + 0.5) - grid.beats[s.beat];
+    if (Math.abs(s.t - v.t) > AI.vocalSnap * (beatLen / 4) || !subs.includes(s.sub)) {
+      // sung off the grid: only the full-16th difficulty keeps it, at its real time (sub -2 = off-grid)
+      if (subs.length === 4) out.push({ t: v.t, score, band: 1, sub: -2, beat: s.beat, beatLen, sung: v.dur });
+      continue;
+    }
+    // the sung length is measured from the real onset; keep it relative to the snapped start
+    out.push({ t: s.t, score, band: 1, sub: s.sub, beat: s.beat, beatLen, sung: v.t + v.dur - s.t });
+  }
+  return out;
+}
+
+/** Vocals take precedence over accompaniment hits on the same slot (or within 40ms off-grid). */
+function mergeCandidates(vocal: Candidate[], accomp: Candidate[]): Candidate[] {
+  const all = [...vocal, ...accomp.map((c) => ({ ...c, score: c.score * AI.accompWeight }))].sort((a, b) => a.t - b.t || b.score - a.score);
+  const out: Candidate[] = [];
+  for (const c of all) {
+    const prev = out[out.length - 1];
+    if (prev && Math.abs(prev.t - c.t) < 0.04) {
+      if (c.sung !== undefined && prev.sung === undefined) out[out.length - 1] = { ...c, score: Math.max(c.score, prev.score) };
+      continue;
+    }
+    out.push(c);
+  }
+  return out;
+}
+
+/** Holds from sustained sung notes: half-beat steps, capped length and share. */
+function markVocalHolds(keep: Candidate[], duration: number) {
+  const found: Candidate[] = [];
+  for (const c of keep) {
+    if (c.sung === undefined || c.sung < AI.holdMinBeats * c.beatLen - 0.02) continue;
+    const half = c.beatLen / 2;
+    // round to the nearest half beat (pitch tracking trims a little off both ends), never past the song
+    const dur = Math.min(HOLD_MAX_BEATS * c.beatLen, Math.round(c.sung / half) * half, duration - c.t);
+    if (dur >= AI.holdMinBeats * c.beatLen - 1e-6) found.push(Object.assign(c, { dur }));
+  }
+  const maxHolds = Math.floor(keep.length * HOLD_MAX_SHARE);
+  found.sort((a, b) => b.sung! - a.sung!).slice(maxHolds).forEach((c) => delete c.dur);
+}
+
 /** Keep the best-scoring candidates in each 4-beat group up to the density cap. */
-function thin(cands: Candidate[], factors: number[], maxDensity: number, minScore: number, freeGap: number, reliable: boolean) {
+function thin(cands: Candidate[], factors: number[], maxDensity: number, minScore: number, freeGap: number, reliable: boolean, vocalFloor = 0) {
   const groups = new Map<number, number[]>();
   cands.forEach((c, i) => {
     if (c.score < minScore) return;
@@ -97,7 +157,11 @@ function thin(cands: Candidate[], factors: number[], maxDensity: number, minScor
   const keep: Candidate[] = [];
   for (const idx of groups.values()) {
     const c0 = cands[idx[0]];
-    const cap = Math.max(1, Math.round(maxDensity * 4 * c0.beatLen * factors[idx[0]]));
+    const groupMax = maxDensity * 4 * c0.beatLen;
+    const sungHere = idx.filter((i) => cands[i].sung !== undefined).length;
+    // the section factor sets the cap, but sung notes may lift it (never past the densest section's cap)
+    const cap = Math.max(1, Math.round(Math.min(groupMax * DENSITY_MAX_FACTOR,
+      Math.max(groupMax * factors[idx[0]], Math.ceil(vocalFloor * sungHere)))));
     const chosen: Candidate[] = [];
     for (const i of [...idx].sort((a, b) => cands[b].score - cands[a].score)) {
       if (chosen.length >= cap) break;
@@ -192,13 +256,19 @@ class LanePicker {
 
 export function generateChart(
   f: Features, onsets: Onset[], grid: Grid, difficulty: Difficulty, seed: string, duration: number,
+  vocals?: VocalNote[],
 ): Chart {
   const p = DIFFICULTY[difficulty];
-  const cands = candidates(onsets, grid, p.subs).filter((c) => c.t >= 0 && c.t < duration);
+  const sung = vocals && vocals.length >= AI.minVocalNotes ? vocals : null;
+  const base = candidates(onsets, grid, p.subs);
+  const cands = (sung ? mergeCandidates(vocalCandidates(sung, grid, p.subs), base) : base).filter((c) => c.t >= 0 && c.t < duration);
   const sections = computeSections(f, onsets, grid, duration);
   const factors = cands.map((c) => densityFactor(sectionAt(sections, c.t).strength));
-  const keep = thin(cands, factors, p.maxDensity, p.minScore, p.freeGap, grid.reliable);
-  if (p.holds) markHolds(f, keep, duration);
+  const keep = thin(cands, factors, p.maxDensity, p.minScore, p.freeGap, grid.reliable, sung ? p.vocalFloor : 0);
+  if (p.holds) {
+    if (sung) markVocalHolds(keep, duration);
+    else markHolds(f, keep, duration);
+  }
   markChords(keep, p.chords, p.chordShare, sections);
 
   const picker = new LanePicker(makeRng(hashSeed(`${seed}:${difficulty}`)));

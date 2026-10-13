@@ -92,7 +92,7 @@ function runWorker(pcm: Float32Array, seed: string, status: Status): Promise<Ana
       }
     };
     w.onerror = (e) => { w.terminate(); reject(new LoadError(`解析に失敗しました: ${e.message}`)); };
-    w.postMessage({ pcm, sr: SR, seed }, [pcm.buffer]);
+    w.postMessage({ mode: 'mix', pcm, sr: SR, seed }, [pcm.buffer]);
   });
 }
 

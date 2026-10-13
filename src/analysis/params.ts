@@ -46,12 +46,14 @@ export interface DifficultyParams {
   minScore: number;
   /** Minimum gap between notes when the grid is unreliable (seconds). */
   freeGap: number;
+  /** AI charts: the density cap is raised so at least this share of sung notes in a group survive. */
+  vocalFloor: number;
 }
 
 export const DIFFICULTY: Record<'easy' | 'normal' | 'hard', DifficultyParams> = {
-  easy: { subs: [0], maxDensity: 3, chords: 'none', chordShare: 0, holds: false, minScore: 0.25, freeGap: 0.3 },
-  normal: { subs: [0, 2], maxDensity: 6, chords: 'strong', chordShare: 0.15, holds: true, minScore: 0.2, freeGap: 0.15 },
-  hard: { subs: [0, 1, 2, 3], maxDensity: 10, chords: 'any', chordShare: 0.25, holds: true, minScore: 0.15, freeGap: 0.08 },
+  easy: { subs: [0], maxDensity: 3, chords: 'none', chordShare: 0, holds: false, minScore: 0.25, freeGap: 0.3, vocalFloor: 0 },
+  normal: { subs: [0, 2], maxDensity: 6, chords: 'strong', chordShare: 0.15, holds: true, minScore: 0.2, freeGap: 0.15, vocalFloor: 0.6 },
+  hard: { subs: [0, 1, 2, 3], maxDensity: 10, chords: 'any', chordShare: 0.25, holds: true, minScore: 0.15, freeGap: 0.08, vocalFloor: 1 },
 };
 
 /** Onsets snap to a slot when within this fraction of a 16th note. */
@@ -66,6 +68,7 @@ export const SECTION_WEIGHTS = { loud: 0.55, density: 0.25, repeat: 0.2 } as con
 /** Density multiplier = BASE + SPAN × strength (0.3–1.3). */
 export const DENSITY_BASE = 0.3;
 export const DENSITY_SPAN = 1.0;
+export const DENSITY_MAX_FACTOR = DENSITY_BASE + DENSITY_SPAN;
 /** Chords: none below WEAK, share ×STRONG_MULT at or above STRONG. */
 export const CHORD_WEAK = 0.3;
 export const CHORD_STRONG = 0.7;
@@ -107,4 +110,24 @@ export const VOCAL = {
   /** Short notes this many semitones away from both neighbours are tracker glitches. */
   glitchSemitones: 9,
   glitchMaxDur: 0.15,
+  /** Onset refinement: look this far back (s) for the stem's energy rise (consonants precede stable pitch). */
+  attackLookback: 0.1,
+  attackLookahead: 0.02,
+} as const;
+
+// AI (vocal-driven) charts
+export const AI = {
+  /** Vocal note score = BASE + LEVEL × level. */
+  vocalBase: 0.65,
+  vocalLevel: 0.35,
+  /** Vocal onsets snap to the grid within this fraction of a 16th; further off they stay at their sung time (HARD only). */
+  vocalSnap: 0.3,
+  /** Ignore very quiet vocal notes (breaths, bleed). */
+  vocalMinLevel: 0.08,
+  /** Accompaniment onset scores are scaled so vocals win when both are present. */
+  accompWeight: 0.7,
+  /** Sung notes at least this many beats long become holds. */
+  holdMinBeats: 1,
+  /** Below this many vocal notes the song is treated as instrumental (energy-based holds). */
+  minVocalNotes: 20,
 } as const;
