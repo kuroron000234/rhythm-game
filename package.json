@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --run dev:server & vite",
-    "dev:server": "PORT=5174 tsx watch server/index.ts",
+    "dev:server": "RG_DEV=1 PORT=5174 tsx watch server/index.ts",
     "build": "tsc --noEmit && vite build",
     "start": "npm run build && tsx server/index.ts",
     "test": "vitest run"
