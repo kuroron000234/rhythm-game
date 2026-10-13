@@ -16,7 +16,7 @@ export class LoadError extends Error {
   }
 }
 
-export async function serverStatus(): Promise<{ ytdlp: string | null } | null> {
+export async function serverStatus(): Promise<{ ytdlp: string | null; ai: { device: 'cuda' | 'cpu' } | null } | null> {
   try {
     const r = await fetch('/api/status');
     return r.ok ? await r.json() : null;
@@ -70,7 +70,7 @@ export async function fromHistory(entry: SongEntry, status: Status): Promise<{ e
   return fromUrl(entry.url!, status);
 }
 
-function toMono22k(buffer: AudioBuffer): Promise<AudioBuffer> {
+export function toMono22k(buffer: AudioBuffer): Promise<AudioBuffer> {
   const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(buffer.duration * SR)), SR);
   const src = off.createBufferSource();
   src.buffer = buffer;
@@ -79,7 +79,11 @@ function toMono22k(buffer: AudioBuffer): Promise<AudioBuffer> {
   return off.startRendering();
 }
 
-function runWorker(pcm: Float32Array, seed: string, status: Status): Promise<Analysis> {
+type WorkerJob =
+  | { mode: 'mix'; pcm: Float32Array; sr: number; seed: string }
+  | { mode: 'ai'; vocals: Float32Array; accomp: Float32Array; sr: number; seed: string };
+
+export function runWorker(job: WorkerJob, status: Status): Promise<Analysis> {
   return new Promise((resolve, reject) => {
     const w = new Worker(new URL('./analysis/worker.ts', import.meta.url), { type: 'module' });
     w.onmessage = (e) => {
@@ -92,9 +96,13 @@ function runWorker(pcm: Float32Array, seed: string, status: Status): Promise<Ana
       }
     };
     w.onerror = (e) => { w.terminate(); reject(new LoadError(`解析に失敗しました: ${e.message}`)); };
-    w.postMessage({ mode: 'mix', pcm, sr: SR, seed }, [pcm.buffer]);
+    const transfer = job.mode === 'ai' ? [job.vocals.buffer, job.accomp.buffer] : [job.pcm.buffer];
+    w.postMessage(job, transfer);
   });
 }
+
+/** Cached analysis key: AI (stem-based) analyses are stored separately and preferred. */
+export const aiKey = (id: string) => `ai:${id}`;
 
 export async function prepare(ctx: AudioContext, entry: SongEntry, bytes: ArrayBuffer, status: Status): Promise<LoadedSong> {
   status('デコード中…');
@@ -105,11 +113,12 @@ export async function prepare(ctx: AudioContext, entry: SongEntry, bytes: ArrayB
     throw new LoadError('この音声形式はデコードできませんでした', 'mp3 / wav / ogg / m4a / webm などを試してください');
   }
   entry = { ...entry, duration: buffer.duration };
-  let analysis = await storage.getAnalysis(entry.id);
-  if (!analysis || analysis.version !== CHART_VERSION) {
+  const fresh = (a?: Analysis) => (a && a.version === CHART_VERSION ? a : undefined);
+  let analysis = fresh(await storage.getAnalysis(aiKey(entry.id))) ?? fresh(await storage.getAnalysis(entry.id));
+  if (!analysis) {
     status('解析の準備中…', 0);
     const mono = await toMono22k(buffer);
-    analysis = await runWorker(mono.getChannelData(0).slice(), entry.id, status);
+    analysis = await runWorker({ mode: 'mix', pcm: mono.getChannelData(0).slice(), sr: SR, seed: entry.id }, status);
     await storage.putAnalysis(entry.id, analysis);
   }
   await storage.putSong(entry);

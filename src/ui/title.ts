@@ -95,6 +95,7 @@ export function showTitle(app: App, go: { select: (s: LoadedSong) => void; setti
     if (!s) server.textContent = 'サーバーに接続できません。URL 読み込みには npm start が必要です(ファイルのドロップは使えます)';
     else if (!s.ytdlp) server.textContent = 'yt-dlp が見つかりません。URL 読み込みは使えません(ファイルのドロップは使えます)';
     else server.textContent = `yt-dlp ${s.ytdlp}`;
+    if (s) server.textContent += s.ai ? ` · AI 譜面: 有効 (${s.ai.device === 'cuda' ? 'GPU' : 'CPU — 分離に数分かかります'})` : ' · AI 譜面: 無効 (npm run setup-ai で有効化)';
     server.classList.toggle('warn', !s?.ytdlp);
   });
 

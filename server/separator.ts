@@ -23,7 +23,8 @@ export function findPython(projectRoot: string): string | null {
 
 function run(bin: string, args: string[], onStderr?: (s: string) => void): Promise<{ code: number; out: string; err: string }> {
   return new Promise((resolve, reject) => {
-    const p = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    // unbuffered so tqdm's \r-terminated progress updates arrive while Demucs runs
+    const p = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PYTHONUNBUFFERED: '1' } });
     let out = '', err = '';
     p.stdout.on('data', (d) => (out += d));
     p.stderr.on('data', (d) => { err += d; onStderr?.(String(d)); });
