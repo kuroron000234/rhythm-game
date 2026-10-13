@@ -1,6 +1,10 @@
 import express from 'express';
 import { AudioCache, isValidId, type SongMeta } from './cache.ts';
 import { YtDlpError, type YtDlp } from './ytdlp.ts';
+import { StemJobs, STEMS } from './jobs.ts';
+import type { Separator } from './separator.ts';
+import { writeFile } from 'node:fs/promises';
+import { join, extname } from 'node:path';
 
 export const MAX_DURATION = 20 * 60;
 
@@ -26,11 +30,12 @@ export function describeYtDlpError(raw: string): { error: string; hint: string }
   return { error: error || raw, hint };
 }
 
-export function createApp(opts: { cacheDir: string; ytdlp: YtDlp; staticDir?: string }) {
+export function createApp(opts: { cacheDir: string; ytdlp: YtDlp; separator?: Separator; staticDir?: string }) {
   const cache = new AudioCache(opts.cacheDir);
   const inflight = new Map<string, Promise<SongMeta>>();
   /** url → id, so replaying a cached song skips the (slow, networked) probe. */
   const known = new Map<string, string>();
+  const jobs = opts.separator ? new StemJobs(opts.cacheDir, opts.separator) : null;
   const app = express();
   app.use(express.json());
 
@@ -76,7 +81,47 @@ export function createApp(opts: { cacheDir: string; ytdlp: YtDlp; staticDir?: st
   });
 
   app.get('/api/status', async (_req, res) => {
-    res.json({ ytdlp: await opts.ytdlp.version() });
+    const [ytdlp, ai] = await Promise.all([opts.ytdlp.version(), opts.separator?.probe() ?? null]);
+    res.json({ ytdlp, ai });
+  });
+
+  // dropped files are uploaded so they can be separated too
+  app.post('/api/upload/:id', express.raw({ type: () => true, limit: '300mb' }), async (req, res) => {
+    const { id } = req.params;
+    if (!isValidId(id) || !id.startsWith('file-')) return void res.status(400).json({ error: 'invalid id' });
+    if (!(await cache.get(id))) {
+      const name = decodeURIComponent(String(req.headers['x-filename'] ?? 'audio'));
+      const ext = (extname(name) || '.bin').replace(/[^.\w]/g, '').slice(0, 8);
+      await cache.put(id, async (tmp) => {
+        const path = join(tmp, `audio${ext}`);
+        await writeFile(path, req.body as Buffer);
+        return { id, title: name.replace(/\.[^.]+$/, ''), duration: 0, thumbnail: null, path };
+      });
+    }
+    res.json({ ok: true });
+  });
+
+  app.get('/api/stems/:id', async (req, res) => {
+    const { id } = req.params;
+    if (!isValidId(id)) return void res.status(400).json({ error: 'invalid id' });
+    if (!jobs) return void res.json({ state: 'none' });
+    res.json(await jobs.status(id));
+  });
+
+  app.post('/api/stems/:id', async (req, res) => {
+    const { id } = req.params;
+    if (!isValidId(id)) return void res.status(400).json({ error: 'invalid id' });
+    if (!jobs || !(await opts.separator!.probe())) return void res.status(503).json({ error: 'AI 分離は使えません' });
+    const meta = await cache.get(id);
+    if (!meta) return void res.status(404).json({ error: 'not found' });
+    res.status(202).json(await jobs.enqueue(id, cache.audioPath(meta)));
+  });
+
+  app.get('/api/stems/:id/:stem', async (req, res) => {
+    const { id, stem } = req.params;
+    if (!isValidId(id) || !(STEMS as readonly string[]).includes(stem)) return void res.status(400).json({ error: 'invalid' });
+    if (!jobs || (await jobs.status(id)).state !== 'done') return void res.status(404).json({ error: 'not ready' });
+    res.sendFile(jobs.stemPath(id, stem as (typeof STEMS)[number]), { dotfiles: 'allow' });
   });
 
   if (opts.staticDir) app.use(express.static(opts.staticDir));
