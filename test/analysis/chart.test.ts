@@ -82,7 +82,7 @@ describe('analyze / generateChart', () => {
     });
 
     it(`${d}: respects the density cap per 4-beat group`, () => {
-      const cap = { easy: 3, normal: 6, hard: 10 }[d] * 4 * beat * 1.2;
+      const cap = { easy: 3, normal: 6, hard: 10 }[d] * 4 * beat * 1.3; // max section density factor
       for (let g = 0; g < duration; g += 4 * beat) {
         const times = new Set(chart.notes.filter((n) => n.t >= g && n.t < g + 4 * beat).map((n) => n.t));
         expect(times.size).toBeLessThanOrEqual(Math.ceil(cap) + 1);

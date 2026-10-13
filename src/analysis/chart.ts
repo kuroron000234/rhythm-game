@@ -3,9 +3,11 @@ import type { Onset } from './onsets.ts';
 import { percentile } from './onsets.ts';
 import type { Grid } from './tempo.ts';
 import { hashSeed, makeRng } from './rng.ts';
+import { computeSections, densityFactor, sectionAt, type Section } from './sections.ts';
 import {
   BEAT_HEAD_BONUS, CHART_VERSION, CRITICAL_MIN_GAP_BEATS, CRITICAL_SHARE, DIFFICULTY, HOLD_MAX_BEATS,
-  HOLD_MAX_SHARE, HOLD_MIN_BEATS, HOLD_MIN_LOUDNESS, HOLD_REF_DELAY, HOLD_SUSTAIN_RATIO, INTENSITY_RANGE, SECTION_BEATS, SNAP_TOLERANCE,
+  HOLD_MAX_SHARE, HOLD_MIN_BEATS, HOLD_MIN_LOUDNESS, HOLD_REF_DELAY, HOLD_SUSTAIN_RATIO, SNAP_TOLERANCE,
+  CHORD_STRONG, CHORD_STRONG_MULT, CHORD_WEAK, CRITICAL_MIN_STRENGTH,
 } from './params.ts';
 
 export type Difficulty = 'easy' | 'normal' | 'hard';
@@ -83,27 +85,6 @@ function candidates(onsets: Onset[], grid: Grid, subs: number[]): Candidate[] {
     .sort((a, b) => a.t - b.t);
 }
 
-/** Per-candidate density multiplier from the loudness of its 4-bar section. */
-function intensity(f: Features, cands: Candidate[]): number[] {
-  const sectionLen = (c: Candidate) => SECTION_BEATS * c.beatLen;
-  const key = (c: Candidate) => Math.floor(c.t / sectionLen(c));
-  const sections = new Map<number, number>();
-  for (const c of cands) {
-    const k = key(c);
-    if (sections.has(k)) continue;
-    const a = Math.floor(k * sectionLen(c) * f.frameRate);
-    const b = Math.min(f.nFrames, Math.floor((k + 1) * sectionLen(c) * f.frameRate));
-    let s = 0;
-    for (let i = a; i < b; i++) s += f.rms[i];
-    sections.set(k, b > a ? s / (b - a) : 0);
-  }
-  const ref = percentile([...sections.values()], 0.9) || 1;
-  return cands.map((c) => {
-    const r = (sections.get(key(c)) ?? 0) / ref;
-    return Math.min(INTENSITY_RANGE[1], Math.max(INTENSITY_RANGE[0], INTENSITY_RANGE[0] + (INTENSITY_RANGE[1] - INTENSITY_RANGE[0]) * r));
-  });
-}
-
 /** Keep the best-scoring candidates in each 4-beat group up to the density cap. */
 function thin(cands: Candidate[], factors: number[], maxDensity: number, minScore: number, freeGap: number, reliable: boolean) {
   const groups = new Map<number, number[]>();
@@ -150,11 +131,18 @@ function markHolds(f: Features, keep: Candidate[], duration: number) {
   found.sort((a, b) => b.score - a.score).slice(maxHolds).forEach((c) => delete c.dur);
 }
 
-function markChords(keep: Candidate[], mode: 'none' | 'strong' | 'any', share: number) {
+/** Chords go to the strongest hits, more of them in big sections and none in weak ones. */
+function markChords(keep: Candidate[], mode: 'none' | 'strong' | 'any', share: number, sections: Section[]) {
   if (mode === 'none' || keep.length === 0) return;
-  const eligible = keep.filter((c) => mode === 'any' || c.sub === 0 || (c.sub === -1 && c.score > 0.8));
-  const cut = percentile(keep.map((c) => c.score), 1 - share);
-  for (const c of eligible) if (c.score >= cut && !c.dur) c.chord = true;
+  const scores = keep.map((c) => c.score);
+  const cutNormal = percentile(scores, 1 - share);
+  const cutStrong = percentile(scores, 1 - Math.min(0.9, share * CHORD_STRONG_MULT));
+  for (const c of keep) {
+    if (c.dur || !(mode === 'any' || c.sub === 0 || (c.sub === -1 && c.score > 0.8))) continue;
+    const s = sectionAt(sections, c.t).strength;
+    if (s < CHORD_WEAK) continue;
+    if (c.score >= (s >= CHORD_STRONG ? cutStrong : cutNormal)) c.chord = true;
+  }
 }
 
 class LanePicker {
@@ -207,9 +195,11 @@ export function generateChart(
 ): Chart {
   const p = DIFFICULTY[difficulty];
   const cands = candidates(onsets, grid, p.subs).filter((c) => c.t >= 0 && c.t < duration);
-  const keep = thin(cands, intensity(f, cands), p.maxDensity, p.minScore, p.freeGap, grid.reliable);
+  const sections = computeSections(f, onsets, grid, duration);
+  const factors = cands.map((c) => densityFactor(sectionAt(sections, c.t).strength));
+  const keep = thin(cands, factors, p.maxDensity, p.minScore, p.freeGap, grid.reliable);
   if (p.holds) markHolds(f, keep, duration);
-  markChords(keep, p.chords, p.chordShare);
+  markChords(keep, p.chords, p.chordShare, sections);
 
   const picker = new LanePicker(makeRng(hashSeed(`${seed}:${difficulty}`)));
   const placed: (Note & { score: number; sub: number; beatLen: number })[] = [];
@@ -231,7 +221,9 @@ export function generateChart(
   // critical notes: the strongest on-beat accents, spaced apart
   const nCrit = Math.max(placed.length ? 1 : 0, Math.floor(placed.length * CRITICAL_SHARE));
   let made = 0;
-  const ranked = placed.filter((n) => n.sub === 0 || n.sub === -1).sort((a, b) => b.score - a.score || a.t - b.t);
+  const ranked = placed
+    .filter((n) => (n.sub === 0 || n.sub === -1) && sectionAt(sections, n.t).strength >= CRITICAL_MIN_STRENGTH)
+    .sort((a, b) => b.score - a.score || a.t - b.t);
   const critTimes: number[] = [];
   for (const n of ranked) {
     if (made >= nCrit) break;

@@ -9,6 +9,8 @@ export interface Features {
   /** Linear energy per band. */
   energy: [Float32Array, Float32Array, Float32Array];
   rms: Float32Array;
+  /** 12 pitch-class magnitude sums per frame (80Hz–5kHz). */
+  chroma: Float32Array[];
 }
 
 /** In-place iterative radix-2 FFT. */
@@ -52,6 +54,13 @@ export function computeFeatures(pcm: Float32Array, sr: number): Features {
     [binOf(BAND_EDGES[0]), binOf(BAND_EDGES[1])],
     [binOf(BAND_EDGES[1]), nBins],
   ];
+  // bin → pitch class for the chroma, -1 outside 80Hz–5kHz
+  const pc = new Int8Array(nBins).fill(-1);
+  for (let k = 1; k < nBins; k++) {
+    const hz = (k * sr) / WIN;
+    if (hz >= 80 && hz <= 5000) pc[k] = ((Math.round(12 * Math.log2(hz / 440) + 69) % 12) + 12) % 12;
+  }
+  const chroma = Array.from({ length: 12 }, () => new Float32Array(nFrames));
   const hann = new Float64Array(WIN);
   for (let i = 0; i < WIN; i++) hann[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / WIN);
 
@@ -77,7 +86,10 @@ export function computeFeatures(pcm: Float32Array, sr: number): Features {
     }
     rms[f] = Math.sqrt(sq / WIN);
     fft(re, im);
-    for (let k = 0; k < nBins; k++) cur[k] = Math.hypot(re[k], im[k]);
+    for (let k = 0; k < nBins; k++) {
+      cur[k] = Math.hypot(re[k], im[k]);
+      if (pc[k] >= 0) chroma[pc[k]][f] += cur[k];
+    }
     for (let b = 0; b < 3; b++) {
       let e = 0, fl = 0;
       for (let k = ranges[b][0]; k < ranges[b][1]; k++) {
@@ -91,5 +103,5 @@ export function computeFeatures(pcm: Float32Array, sr: number): Features {
     combinedFlux[f] = flux[0][f] + flux[1][f] + flux[2][f];
     [prev, cur] = [cur, prev];
   }
-  return { frameRate: sr / HOP, nFrames, flux, combinedFlux, energy, rms };
+  return { frameRate: sr / HOP, nFrames, flux, combinedFlux, energy, rms, chroma };
 }

@@ -6,7 +6,7 @@ export const HOP = 512;
 export const BAND_EDGES = [150, 2000] as const;
 
 /** Bump whenever analysis/chart output changes so cached charts are regenerated. */
-export const CHART_VERSION = 1;
+export const CHART_VERSION = 2;
 
 // Onset detection
 /** Half-width of the adaptive threshold window, in seconds. */
@@ -57,10 +57,20 @@ export const DIFFICULTY: Record<'easy' | 'normal' | 'hard', DifficultyParams> = 
 /** Onsets snap to a slot when within this fraction of a 16th note. */
 export const SNAP_TOLERANCE = 0.4;
 export const BEAT_HEAD_BONUS = [0.3, 0, 0.1, 0];
-/** Section intensity scales density between these bounds. */
-export const INTENSITY_RANGE = [0.5, 1.15] as const;
 /** Beats per intensity section (4 bars). */
 export const SECTION_BEATS = 16;
+/** Section length in seconds when there is no reliable beat grid. */
+export const SECTION_FREE_SECONDS = 8;
+/** strength = rank-blend of LOUD·loudness + DENSITY·onset density + REPEAT·repetition·loudness */
+export const SECTION_WEIGHTS = { loud: 0.55, density: 0.25, repeat: 0.2 } as const;
+/** Density multiplier = BASE + SPAN × strength (0.3–1.3). */
+export const DENSITY_BASE = 0.3;
+export const DENSITY_SPAN = 1.0;
+/** Chords: none below WEAK, share ×STRONG_MULT at or above STRONG. */
+export const CHORD_WEAK = 0.3;
+export const CHORD_STRONG = 0.7;
+export const CHORD_STRONG_MULT = 1.5;
+export const CRITICAL_MIN_STRENGTH = 0.6;
 export const HOLD_MIN_BEATS = 2;
 export const HOLD_MAX_BEATS = 4;
 /** Energy must stay above this fraction of its start level to count as sustained. */
