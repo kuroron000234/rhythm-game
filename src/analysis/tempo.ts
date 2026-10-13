@@ -107,6 +107,21 @@ function gridAlignment(env: Float32Array, frameRate: number, beats: number[]): n
   return peaks ? aligned / peaks : 0;
 }
 
+/** Local linear fit over ±4 beats removes the frame quantisation (~23ms) while still following drift. */
+function smoothBeats(beats: number[]): number[] {
+  const R = 4;
+  return beats.map((_, i) => {
+    const a = Math.max(0, i - R), b = Math.min(beats.length - 1, i + R);
+    if (b - a < 2) return beats[i];
+    let mx = 0, my = 0;
+    for (let j = a; j <= b; j++) { mx += j; my += beats[j]; }
+    mx /= b - a + 1; my /= b - a + 1;
+    let num = 0, den = 0;
+    for (let j = a; j <= b; j++) { num += (j - mx) * (beats[j] - my); den += (j - mx) ** 2; }
+    return my + (num / den) * (i - mx);
+  });
+}
+
 function median(a: number[]) {
   const s = [...a].sort((x, y) => x - y);
   return s.length ? s[s.length >> 1] : 0;
@@ -115,7 +130,7 @@ function median(a: number[]) {
 export function trackBeats(f: Features, duration: number): Grid {
   const env = normalize(f.combinedFlux);
   const { period, prominence } = estimatePeriod(env, f.frameRate);
-  let beats = dpBeats(env, period).map((i) => i / f.frameRate);
+  let beats = smoothBeats(dpBeats(env, period).map((i) => i / f.frameRate));
 
   const intervals = beats.slice(1).map((b, i) => b - beats[i]);
   const med = median(intervals) || 60 / DEFAULT_BPM;

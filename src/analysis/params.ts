@@ -32,3 +32,43 @@ export const GRID_MIN_PROMINENCE = 2.0;
 export const GRID_MAX_CV = 0.05;
 export const GRID_ALIGN_TOL = 0.025;
 export const GRID_MIN_ALIGNMENT = 0.75;
+
+// Chart generation
+export interface DifficultyParams {
+  /** Allowed slot subdivisions (0 = beat, 2 = 8th, 1/3 = 16ths). */
+  subs: number[];
+  /** Target maximum notes per second (before the intensity factor). */
+  maxDensity: number;
+  chords: 'none' | 'strong' | 'any';
+  /** Fraction of the strongest candidates that become chords. */
+  chordShare: number;
+  holds: boolean;
+  minScore: number;
+  /** Minimum gap between notes when the grid is unreliable (seconds). */
+  freeGap: number;
+}
+
+export const DIFFICULTY: Record<'easy' | 'normal' | 'hard', DifficultyParams> = {
+  easy: { subs: [0], maxDensity: 3, chords: 'none', chordShare: 0, holds: false, minScore: 0.25, freeGap: 0.3 },
+  normal: { subs: [0, 2], maxDensity: 6, chords: 'strong', chordShare: 0.15, holds: true, minScore: 0.2, freeGap: 0.15 },
+  hard: { subs: [0, 1, 2, 3], maxDensity: 10, chords: 'any', chordShare: 0.25, holds: true, minScore: 0.15, freeGap: 0.08 },
+};
+
+/** Onsets snap to a slot when within this fraction of a 16th note. */
+export const SNAP_TOLERANCE = 0.4;
+export const BEAT_HEAD_BONUS = [0.3, 0, 0.1, 0];
+/** Section intensity scales density between these bounds. */
+export const INTENSITY_RANGE = [0.5, 1.15] as const;
+/** Beats per intensity section (4 bars). */
+export const SECTION_BEATS = 16;
+export const HOLD_MIN_BEATS = 2;
+export const HOLD_MAX_BEATS = 4;
+/** Energy must stay above this fraction of its start level to count as sustained. */
+export const HOLD_SUSTAIN_RATIO = 0.5;
+export const HOLD_MAX_SHARE = 0.15;
+/** Seconds after the onset where the sustain reference level is taken. */
+export const HOLD_REF_DELAY = 0.12;
+/** The reference level must exceed this percentile of mid-band energy. */
+export const HOLD_MIN_LOUDNESS = 0.6;
+export const CRITICAL_SHARE = 0.03;
+export const CRITICAL_MIN_GAP_BEATS = 8;
