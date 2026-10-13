@@ -63,7 +63,7 @@ afterEach(async () => { server?.close(); await rm(dir, { recursive: true, force:
 describe('stem separation API', () => {
   it('reports AI availability in /api/status', async () => {
     await start(fakeSeparator());
-    expect(await json(fetch(`${base}/api/status`))).toEqual({ ytdlp: 'x', ai: { device: 'cpu' } });
+    expect(await json(fetch(`${base}/api/status`))).toEqual({ ytdlp: 'x', ai: { device: 'cpu' }, mug: null });
   });
 
   it('goes none → queued/running → done and serves the stems', async () => {

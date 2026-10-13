@@ -1,7 +1,8 @@
 import express from 'express';
 import { AudioCache, isValidId, type SongMeta } from './cache.ts';
 import { YtDlpError, type YtDlp } from './ytdlp.ts';
-import { StemJobs, STEMS } from './jobs.ts';
+import { FileJobs } from './jobs.ts';
+import { MUG_DIFFICULTIES, MUG_SUBDIR, type MugRunner } from './mug.ts';
 import type { Separator } from './separator.ts';
 import { writeFile } from 'node:fs/promises';
 import { join, extname } from 'node:path';
@@ -30,12 +31,22 @@ export function describeYtDlpError(raw: string): { error: string; hint: string }
   return { error: error || raw, hint };
 }
 
-export function createApp(opts: { cacheDir: string; ytdlp: YtDlp; separator?: Separator; staticDir?: string }) {
+const STEMS = ['vocals', 'accomp'] as const;
+
+export function createApp(opts: { cacheDir: string; ytdlp: YtDlp; separator?: Separator; mug?: MugRunner; staticDir?: string }) {
   const cache = new AudioCache(opts.cacheDir);
   const inflight = new Map<string, Promise<SongMeta>>();
   /** url → id, so replaying a cached song skips the (slow, networked) probe. */
   const known = new Map<string, string>();
-  const jobs = opts.separator ? new StemJobs(opts.cacheDir, opts.separator) : null;
+  const sep = opts.separator;
+  const jobs = sep ? new FileJobs(opts.cacheDir, {
+    subdir: 'stems', files: STEMS.map((s) => `${s}.flac`),
+    run: async (audio, out, progress) => { await sep.separate(audio, out, progress); },
+  }) : null;
+  const mug = opts.mug;
+  const mugJobs = mug ? new FileJobs(opts.cacheDir, {
+    subdir: MUG_SUBDIR, files: MUG_DIFFICULTIES.map((d) => `${d}.osu`), run: (audio, out, progress) => mug.generate(audio, out, progress),
+  }) : null;
   const app = express();
   app.use(express.json());
 
@@ -81,8 +92,8 @@ export function createApp(opts: { cacheDir: string; ytdlp: YtDlp; separator?: Se
   });
 
   app.get('/api/status', async (_req, res) => {
-    const [ytdlp, ai] = await Promise.all([opts.ytdlp.version(), opts.separator?.probe() ?? null]);
-    res.json({ ytdlp, ai });
+    const [ytdlp, ai, mugStatus] = await Promise.all([opts.ytdlp.version(), opts.separator?.probe() ?? null, mug?.probe() ?? null]);
+    res.json({ ytdlp, ai, mug: mugStatus });
   });
 
   // dropped files are uploaded so they can be separated too
@@ -121,7 +132,30 @@ export function createApp(opts: { cacheDir: string; ytdlp: YtDlp; separator?: Se
     const { id, stem } = req.params;
     if (!isValidId(id) || !(STEMS as readonly string[]).includes(stem)) return void res.status(400).json({ error: 'invalid' });
     if (!jobs || (await jobs.status(id)).state !== 'done') return void res.status(404).json({ error: 'not ready' });
-    res.sendFile(jobs.stemPath(id, stem as (typeof STEMS)[number]), { dotfiles: 'allow' });
+    res.sendFile(jobs.path(id, `${stem}.flac`), { dotfiles: 'allow' });
+  });
+
+  // MuG Diffusion: charts learned from human-made 4K maps
+  app.get('/api/mug/:id', async (req, res) => {
+    const { id } = req.params;
+    if (!isValidId(id)) return void res.status(400).json({ error: 'invalid id' });
+    res.json(mugJobs ? await mugJobs.status(id) : { state: 'none' });
+  });
+
+  app.post('/api/mug/:id', async (req, res) => {
+    const { id } = req.params;
+    if (!isValidId(id)) return void res.status(400).json({ error: 'invalid id' });
+    if (!mugJobs || !(await mug!.probe())) return void res.status(503).json({ error: 'MuG は使えません' });
+    const meta = await cache.get(id);
+    if (!meta) return void res.status(404).json({ error: 'not found' });
+    res.status(202).json(await mugJobs.enqueue(id, cache.audioPath(meta)));
+  });
+
+  app.get('/api/mug/:id/:difficulty', async (req, res) => {
+    const { id, difficulty } = req.params;
+    if (!isValidId(id) || !(MUG_DIFFICULTIES as readonly string[]).includes(difficulty)) return void res.status(400).json({ error: 'invalid' });
+    if (!mugJobs || (await mugJobs.status(id)).state !== 'done') return void res.status(404).json({ error: 'not ready' });
+    res.type('text/plain').sendFile(mugJobs.path(id, `${difficulty}.osu`), { dotfiles: 'allow' });
   });
 
   if (opts.staticDir) app.use(express.static(opts.staticDir));

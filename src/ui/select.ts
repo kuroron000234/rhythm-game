@@ -3,7 +3,7 @@ import { h, fmtTime } from './dom.ts';
 import type { LoadedSong } from '../loader.ts';
 import type { Difficulty } from '../analysis/chart.ts';
 import { storage } from '../storage.ts';
-import { aiAvailable, watchAi } from '../aiJobs.ts';
+import { aiKind, watchAi } from '../aiJobs.ts';
 
 const DIFFS: Difficulty[] = ['easy', 'normal', 'hard'];
 let lastDifficulty: Difficulty = 'normal';
@@ -34,14 +34,15 @@ export function showSelect(app: App, song: LoadedSong, go: { play: (d: Difficult
   };
   let left = false;
   let unwatch = () => {};
-  if (analysis.source === 'ai') showBadge('AI 譜面 · ボーカル連動', 'ready');
+  if (analysis.source === 'mug') showBadge('AI 譜面 · MuG(人の譜面から学習)', 'ready');
+  else if (analysis.source === 'ai') showBadge('AI 譜面 · ボーカル連動', 'ready');
   else {
-    aiAvailable().then((ok) => {
-      if (!ok || left) return;
-      unwatch = watchAi(app.ctx, entry, (st) => {
+    aiKind().then((which) => {
+      if (!which || left) return;
+      unwatch = watchAi(app.ctx, entry, analysis, which, (st) => {
         if (left) return;
         if (st.state === 'queued') showBadge('AI 解析待ち…(今の譜面でも遊べます)');
-        else if (st.state === 'running') showBadge(`AI 分離中${st.progress > 0 ? ` ${Math.round(st.progress * 100)}%` : '…'}(今の譜面でも遊べます)`);
+        else if (st.state === 'running') showBadge(`${which === 'mug' ? 'AI 譜面を作成中' : 'AI 分離中'}${st.progress > 0 ? ` ${Math.round(st.progress * 100)}%` : '…'}(今の譜面でも遊べます)`);
         else if (st.state === 'analyzing') showBadge('AI 譜面を生成中…');
         else if (st.state === 'error') { showBadge('AI 解析に失敗しました(通常譜面のままです)', 'error'); aiBadge.title = st.error; }
         else if (st.state === 'ready') {

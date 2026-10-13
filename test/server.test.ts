@@ -113,7 +113,7 @@ describe('server', () => {
 
   it('reports yt-dlp version on /api/status', async () => {
     await start(fakeYtDlp());
-    expect(await (await fetch(`${base}/api/status`)).json()).toEqual({ ytdlp: '2026.08.19', ai: null });
+    expect(await (await fetch(`${base}/api/status`)).json()).toEqual({ ytdlp: '2026.08.19', ai: null, mug: null });
   });
 });
 

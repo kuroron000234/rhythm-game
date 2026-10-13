@@ -16,7 +16,7 @@ export class LoadError extends Error {
   }
 }
 
-export async function serverStatus(): Promise<{ ytdlp: string | null; ai: { device: 'cuda' | 'cpu' } | null } | null> {
+export async function serverStatus(): Promise<{ ytdlp: string | null; ai: { device: 'cuda' | 'cpu' } | null; mug?: { device: 'cuda' | 'cpu' } | null } | null> {
   try {
     const r = await fetch('/api/status');
     return r.ok ? await r.json() : null;

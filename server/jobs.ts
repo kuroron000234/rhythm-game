@@ -1,39 +1,45 @@
 import { access, mkdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Separator } from './separator.ts';
 
-export type StemState = 'none' | 'queued' | 'running' | 'done' | 'error';
-export interface StemStatus { state: StemState; progress?: number; error?: string }
-export const STEMS = ['vocals', 'accomp'] as const;
+export type JobState = 'none' | 'queued' | 'running' | 'done' | 'error';
+export interface JobStatus { state: JobState; progress?: number; error?: string }
 
-/** One Demucs job at a time; results live in <cacheDir>/<id>/stems/. */
-export class StemJobs {
-  private jobs = new Map<string, StemStatus & { audio: string }>();
+export interface JobSpec {
+  /** Results live in <cacheDir>/<id>/<subdir>/. */
+  subdir: string;
+  /** Files that must all exist for the job to count as done. */
+  files: readonly string[];
+  run(audio: string, outDir: string, onProgress: (p: number) => void): Promise<void>;
+}
+
+/** One job at a time per queue (GPU work); finished results are read back from disk. */
+export class FileJobs {
+  private jobs = new Map<string, JobStatus & { audio: string }>();
   private queue: string[] = [];
   private running = false;
 
-  constructor(private cacheDir: string, private separator: Separator) {}
+  constructor(private cacheDir: string, private spec: JobSpec) {}
 
-  stemPath(id: string, stem: (typeof STEMS)[number]) {
-    return join(this.cacheDir, id, 'stems', `${stem}.flac`);
+  path(id: string, file: string) {
+    return join(this.cacheDir, id, this.spec.subdir, file);
   }
 
   private async onDisk(id: string) {
     try {
-      await Promise.all(STEMS.map((s) => access(this.stemPath(id, s))));
+      await Promise.all(this.spec.files.map((f) => access(this.path(id, f))));
       return true;
     } catch {
       return false;
     }
   }
 
-  async status(id: string): Promise<StemStatus> {
+  async status(id: string): Promise<JobStatus> {
     const j = this.jobs.get(id);
     if (j) return { state: j.state, ...(j.progress !== undefined ? { progress: j.progress } : {}), ...(j.error ? { error: j.error } : {}) };
     return { state: (await this.onDisk(id)) ? 'done' : 'none' };
   }
 
-  async enqueue(id: string, audio: string): Promise<StemStatus> {
+  async enqueue(id: string, audio: string): Promise<JobStatus> {
     const cur = await this.status(id);
     if (cur.state === 'queued' || cur.state === 'running' || cur.state === 'done') return cur;
     // re-check after the await: a concurrent request may have queued it meanwhile
@@ -54,12 +60,13 @@ export class StemJobs {
     this.running = true;
     job.state = 'running';
     job.progress = 0;
-    const tmp = join(this.cacheDir, id, `.stems-tmp-${Date.now()}`);
+    const final = join(this.cacheDir, id, this.spec.subdir);
+    const tmp = `${final}.tmp-${Date.now()}`;
     try {
       await mkdir(tmp, { recursive: true });
-      await this.separator.separate(job.audio, tmp, (p) => (job.progress = p));
-      await rm(join(this.cacheDir, id, 'stems'), { recursive: true, force: true });
-      await rename(tmp, join(this.cacheDir, id, 'stems'));
+      await this.spec.run(job.audio, tmp, (p) => (job.progress = p));
+      await rm(final, { recursive: true, force: true });
+      await rename(tmp, final);
       this.jobs.delete(id); // disk is the source of truth from now on
     } catch (e) {
       job.state = 'error';

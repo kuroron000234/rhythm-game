@@ -6,7 +6,7 @@ export const HOP = 512;
 export const BAND_EDGES = [150, 2000] as const;
 
 /** Bump whenever analysis/chart output changes so cached charts are regenerated. */
-export const CHART_VERSION = 2;
+export const CHART_VERSION = 3;
 
 // Onset detection
 /** Half-width of the adaptive threshold window, in seconds. */

@@ -8,8 +8,10 @@ import type { Features } from './spectrum.ts';
 
 export interface Analysis {
   version: number;
-  /** 'ai' when built from separated stems (vocal-driven), 'dsp' from the full mix. */
-  source: 'dsp' | 'ai';
+  /** 'dsp' from the full mix, 'ai' from separated stems (vocal-driven), 'mug' from MuG Diffusion. */
+  source: 'dsp' | 'ai' | 'mug';
+  /** Tracked beat times (s), used to snap externally generated charts. */
+  beats: number[];
   bpm: number;
   gridReliable: boolean;
   duration: number;
@@ -53,7 +55,7 @@ function build(pcm: Float32Array, sr: number, seed: string, source: Analysis['so
     hard: generateChart(f, onsets, grid, 'hard', seed, duration, sung),
   };
   onProgress?.(1, '完了');
-  return { version: CHART_VERSION, source, bpm: charts.easy.bpm, gridReliable: grid.reliable, duration, charts, pulse: pulseOf(f) };
+  return { version: CHART_VERSION, source, bpm: charts.easy.bpm, beats: grid.beats, gridReliable: grid.reliable, duration, charts, pulse: pulseOf(f) };
 }
 
 export function analyze(pcm: Float32Array, sr: number, seed: string, onProgress?: Progress): Analysis {
