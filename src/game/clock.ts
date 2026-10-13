@@ -3,6 +3,16 @@
  * getOutputTimestamp() pairs the audio actually reaching the speakers with performance.now(),
  * which lets input event timestamps (performance.now domain) be mapped onto song time exactly.
  */
+/** AudioContext output time at a performance.now()-domain timestamp. */
+export function ctxTimeAt(ctx: AudioContext, perfMs: number): number {
+  const ts = ctx.getOutputTimestamp?.();
+  if (ts && ts.performanceTime && ts.contextTime !== undefined) {
+    return ts.contextTime + (perfMs - ts.performanceTime) / 1000;
+  }
+  const latency = ctx.outputLatency || ctx.baseLatency || 0;
+  return ctx.currentTime - latency - (performance.now() - perfMs) / 1000;
+}
+
 export class SongClock {
   private source?: AudioBufferSourceNode;
   private readonly gain: GainNode;
@@ -60,12 +70,7 @@ export class SongClock {
   /** Song time (seconds) at a performance.now()-domain timestamp, e.g. KeyboardEvent.timeStamp. */
   at(perfMs: number): number {
     if (this.frozen !== null) return this.frozen;
-    const ts = this.ctx.getOutputTimestamp?.();
-    if (ts && ts.performanceTime && ts.contextTime !== undefined) {
-      return ts.contextTime + (perfMs - ts.performanceTime) / 1000 - this.startAt;
-    }
-    const latency = this.ctx.outputLatency || this.ctx.baseLatency || 0;
-    return this.ctx.currentTime - latency - (performance.now() - perfMs) / 1000 - this.startAt;
+    return ctxTimeAt(this.ctx, perfMs) - this.startAt;
   }
 
   now(): number {
