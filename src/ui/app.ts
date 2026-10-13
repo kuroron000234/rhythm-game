@@ -14,7 +14,7 @@ export class App {
   constructor(public settings: Settings, readonly canvas: HTMLCanvasElement) {
     this.ui = document.getElementById('ui')!;
     this.renderer = new Renderer(canvas);
-    window.addEventListener('resize', () => this.renderer.resize());
+    window.addEventListener('resize', () => { this.renderer.resize(); this.renderer.idle(); });
     window.addEventListener('keydown', (e) => this.keyHandler?.(e));
     window.addEventListener('keyup', (e) => this.keyUpHandler?.(e));
   }

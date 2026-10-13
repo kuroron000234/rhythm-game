@@ -99,7 +99,9 @@ th.perfect { color: #ffe36e; } th.great { color: #ff8ad8; } th.good { color: #6f
 .buttons { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 10px; }
 
 /* settings */
-.setting { display: grid; grid-template-columns: 9em 1fr 4.5em; align-items: center; gap: 12px; }
+.setting { display: grid; grid-template-columns: 10em 1fr 4.5em; align-items: center; gap: 12px; }
+.setting > button { white-space: nowrap; padding: 8px 10px; }
+.setting input[type=checkbox] { justify-self: start; width: 18px; height: 18px; accent-color: var(--cyan); }
 .setting > div.muted { grid-column: 2 / 4; }
 .setting output { text-align: right; font-variant-numeric: tabular-nums; }
 .keys { display: flex; gap: 8px; grid-column: 2 / 4; }

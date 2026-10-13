@@ -10,14 +10,36 @@ class HttpError extends Error {
   }
 }
 
+/** Turns yt-dlp's stderr into a short message plus a hint that fits the failure. */
+export function describeYtDlpError(raw: string): { error: string; hint: string } {
+  const error = raw
+    .replace(/^ERROR:\s*(\[[^\]]+\]\s*)?([\w-]+:\s)?/, '')
+    .replace(/\s*Use --cookies.*$/s, '')
+    .trim();
+  const hint = /confirm your age|age-restricted|Sign in/i.test(raw)
+    ? '年齢制限やログインが必要な動画は取得できません'
+    : /not a valid URL|Unsupported URL/i.test(raw)
+      ? 'URL が正しいか確認してください'
+      : /unavailable|private|removed/i.test(raw)
+        ? '動画が非公開・削除済み、または地域制限の可能性があります'
+        : 'yt-dlp -U で更新すると直ることがあります';
+  return { error: error || raw, hint };
+}
+
 export function createApp(opts: { cacheDir: string; ytdlp: YtDlp; staticDir?: string }) {
   const cache = new AudioCache(opts.cacheDir);
   const inflight = new Map<string, Promise<SongMeta>>();
+  /** url → id, so replaying a cached song skips the (slow, networked) probe. */
+  const known = new Map<string, string>();
   const app = express();
   app.use(express.json());
 
   async function fetchSong(url: string): Promise<SongMeta> {
+    const knownId = known.get(url);
+    const hit = knownId && (await cache.get(knownId));
+    if (hit) return hit;
     const info = await opts.ytdlp.probe(url);
+    known.set(url, info.id);
     const cached = await cache.get(info.id);
     if (cached) return cached;
     if (info.duration > MAX_DURATION) throw new HttpError(400, '20 分を超える動画は扱えません');
@@ -39,7 +61,7 @@ export function createApp(opts: { cacheDir: string; ytdlp: YtDlp; staticDir?: st
       res.json(meta);
     } catch (e) {
       if (e instanceof HttpError) res.status(e.status).json({ error: e.message });
-      else if (e instanceof YtDlpError) res.status(502).json({ error: e.message, hint: 'yt-dlp -U で更新すると直ることがあります' });
+      else if (e instanceof YtDlpError) res.status(502).json(describeYtDlpError(e.message));
       else res.status(500).json({ error: String((e as Error)?.message ?? e) });
     }
   });
@@ -49,7 +71,8 @@ export function createApp(opts: { cacheDir: string; ytdlp: YtDlp; staticDir?: st
     if (!isValidId(id)) return void res.status(400).json({ error: 'invalid id' });
     const meta = await cache.get(id);
     if (!meta) return void res.status(404).json({ error: 'not found' });
-    res.sendFile(cache.audioPath(meta));
+    // the default cache dir is ~/.cache, which send() would otherwise refuse as a dotfile path
+    res.sendFile(cache.audioPath(meta), { dotfiles: 'allow' });
   });
 
   app.get('/api/status', async (_req, res) => {

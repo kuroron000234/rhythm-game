@@ -62,7 +62,7 @@ export class Renderer {
 
   /** Pre-blurs the thumbnail once; drawing a blurred image every frame is too slow. */
   setBackground(img: HTMLImageElement | null) {
-    if (!img) { this.bg = null; return; }
+    if (!img) { this.bg = null; this.idle(); return; }
     const c = document.createElement('canvas');
     c.width = 480;
     c.height = 270;
@@ -71,6 +71,13 @@ export class Renderer {
     const s = Math.max(c.width / img.width, c.height / img.height);
     g.drawImage(img, (c.width - img.width * s) / 2, (c.height - img.height * s) / 2, img.width * s, img.height * s);
     this.bg = c;
+    this.idle();
+  }
+
+  /** Background only — used behind menus so the last gameplay frame does not linger. */
+  idle() {
+    this.ctx.globalAlpha = 1;
+    this.drawBackground(0);
   }
 
   reset() {
@@ -208,7 +215,7 @@ export class Renderer {
     c.textBaseline = 'middle';
     for (let l = 0; l < 4; l++) {
       c.fillStyle = f.pressed[l] ? 'rgba(255,255,255,0.9)' : 'rgba(200,220,255,0.35)';
-      c.fillText(f.keys[l] ?? '', this.x(this.laneEdge(l) + 0.125, Z_MIN), this.y(Z_MIN) + this.h * 0.03);
+      c.fillText(f.keys[l] ?? '', this.x(this.laneEdge(l) + 0.125, 0), this.judgeY + this.h * 0.05);
     }
   }
 
@@ -246,18 +253,23 @@ export class Renderer {
     }
   }
 
+  /** Notes keep a constant on-screen thickness relative to their perspective scale. */
   private drawNote(e0: number, e1: number, z: number, [light, dark]: string[], alpha: number) {
     const c = this.ctx;
-    const dz = 0.02;
-    this.quad(e0, e1, z - dz, z + dz);
-    const g = c.createLinearGradient(0, this.y(z + dz), 0, this.y(z - dz));
+    const sc = this.scale(Math.max(z, Z_MIN));
+    const yc = this.y(z);
+    const hh = this.h * 0.013 * sc;
+    const xl = this.x(e0, z), xr = this.x(e1, z);
+    c.beginPath();
+    c.roundRect(xl, yc - hh, xr - xl, hh * 2, hh * 0.6);
+    const g = c.createLinearGradient(0, yc - hh, 0, yc + hh);
     g.addColorStop(0, light);
     g.addColorStop(1, dark);
     c.globalAlpha = alpha * Math.min(1, (1.05 - z) * 4);
     c.fillStyle = g;
     c.fill();
     c.strokeStyle = 'rgba(255,255,255,0.85)';
-    c.lineWidth = 1.5 * this.scale(Math.max(0, z));
+    c.lineWidth = 1.5 * sc;
     c.stroke();
     c.globalAlpha = 1;
   }
@@ -316,7 +328,8 @@ export class Renderer {
     c.textAlign = 'left';
     c.font = `600 ${Math.round(2 * u)}px system-ui, sans-serif`;
     c.fillStyle = 'rgba(220,230,255,0.85)';
-    c.fillText(f.title, 3 * u, 4 * u, this.w * 0.4);
+    const lifeW = Math.min(this.w * 0.4, 50 * u);
+    c.fillText(f.title, 3 * u, 4 * u, Math.max(40, this.w / 2 - lifeW / 2 - 6 * u));
     c.fillStyle = 'rgba(255,255,255,0.15)';
     c.fillRect(3 * u, 6.5 * u, this.w * 0.3, 0.5 * u);
     c.fillStyle = '#9ff3ff';

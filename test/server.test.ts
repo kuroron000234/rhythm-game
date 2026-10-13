@@ -40,7 +40,8 @@ async function start(y: YtDlp) {
 const post = (url: string) =>
   fetch(`${base}/api/fetch`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) });
 
-beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'rg-')); });
+// the real cache lives under ~/.cache, so test inside a dot-directory too
+beforeEach(async () => { dir = join(await mkdtemp(join(tmpdir(), 'rg-')), '.cache'); });
 afterEach(async () => { server?.close(); await rm(dir, { recursive: true, force: true }); });
 
 describe('server', () => {
@@ -91,6 +92,23 @@ describe('server', () => {
     expect((await post('')).status).toBe(400);
     expect((await fetch(`${base}/api/audio/..%2Fetc`)).status).toBe(400);
     expect((await fetch(`${base}/api/audio/youtube-nothere`)).status).toBe(404);
+  });
+
+  it('remembers url → id so a cached song does not need another probe', async () => {
+    const y = fakeYtDlp();
+    await start(y);
+    await post('https://youtu.be/abc123');
+    await post('https://youtu.be/abc123');
+    expect(y.calls.probe).toBe(1);
+  });
+
+  it('gives a specific hint for age-restricted videos', async () => {
+    const y = fakeYtDlp();
+    y.fail = 'ERROR: [youtube] abc: Sign in to confirm your age. Use --cookies-from-browser or --cookies for the authentication.';
+    await start(y);
+    const j = await (await post('https://youtu.be/abc')).json();
+    expect(j.error).toBe('Sign in to confirm your age.');
+    expect(j.hint).toMatch(/年齢制限/);
   });
 
   it('reports yt-dlp version on /api/status', async () => {

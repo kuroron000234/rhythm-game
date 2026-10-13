@@ -122,12 +122,16 @@ export function showPlay(app: App, song: LoadedSong, difficulty: Difficulty, go:
       cancelAnimationFrame(raf);
       window.removeEventListener('blur', onBlur);
       clock.dispose();
+      app.renderer.idle();
     },
   });
 
   // releasing focus would leave keys "stuck"; treat it as a pause
   const onBlur = () => pause();
   window.addEventListener('blur', onBlur);
+
+  // ?debug exposes the session for automated end-to-end checks
+  if (location.search.includes('debug')) Object.assign(window, { __rg: { notes, keys: s.keys, now: () => clock.now(), state: judge.state, deltas } });
 
   clock.start(LEAD_IN).then(() => (raf = requestAnimationFrame(frame)));
 }
