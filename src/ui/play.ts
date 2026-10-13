@@ -4,7 +4,7 @@ import type { LoadedSong } from '../loader.ts';
 import type { Difficulty } from '../analysis/chart.ts';
 import { SongClock } from '../game/clock.ts';
 import { Judge, type JudgeState } from '../game/judge.ts';
-import { playHit } from '../game/hitsound.ts';
+import { playHit, startLoop } from '../game/hitsound.ts';
 
 export interface PlayResult {
   state: JudgeState;
@@ -33,8 +33,14 @@ export function showPlay(app: App, song: LoadedSong, difficulty: Difficulty, go:
 
   app.renderer.reset();
 
+  // hold loop sound per lane while a long note is being held
+  const loops: ((() => void) | null)[] = [null, null, null, null];
+  const stopLoop = (lane: number) => { loops[lane]?.(); loops[lane] = null; };
+  const stopAllLoops = () => [0, 1, 2, 3].forEach(stopLoop);
+
   const handle = (events: ReturnType<Judge['update']>) => {
     for (const ev of events) {
+      if (ev.tail) stopLoop(ev.lane);
       app.renderer.hit(ev.lane, ev.grade, ev.critical, ev.tail);
       if (!ev.tail && ev.grade !== 'miss') deltas.push(ev.delta);
     }
@@ -67,6 +73,7 @@ export function showPlay(app: App, song: LoadedSong, difficulty: Difficulty, go:
     if (ended || clock.paused) return;
     await clock.pause();
     pressed.fill(false);
+    stopAllLoops();
     menu = h('div.pause', {},
       h('h2', {}, 'PAUSE'),
       h('button.primary', { onclick: resume }, '再開 (Esc)'),
@@ -107,7 +114,10 @@ export function showPlay(app: App, song: LoadedSong, difficulty: Difficulty, go:
       pressed[lane] = true;
       const ev = judge.press(lane, clock.at(e.timeStamp) - judgeOffset);
       if (ev) {
-        if (s.hitSound) playHit(app.ctx, app.hitBuffer, s.hitVolume, ev.critical);
+        if (s.hitSound) {
+          playHit(app.ctx, ev.critical ? app.sounds.critical : app.sounds.tap, s.hitVolume);
+          if (judge.holdingIn(lane) >= 0) { stopLoop(lane); loops[lane] = startLoop(app.ctx, app.sounds.hold, s.hitVolume * 0.6); }
+        }
         handle([ev]);
       }
     },
@@ -115,11 +125,13 @@ export function showPlay(app: App, song: LoadedSong, difficulty: Difficulty, go:
       const lane = laneOf(e.code);
       if (lane < 0) return;
       pressed[lane] = false;
+      stopLoop(lane);
       const ev = judge.release(lane, clock.at(e.timeStamp) - judgeOffset);
       if (ev) handle([ev]);
     },
     onLeave: () => {
       cancelAnimationFrame(raf);
+      stopAllLoops();
       window.removeEventListener('blur', onBlur);
       clock.dispose();
       app.renderer.idle();

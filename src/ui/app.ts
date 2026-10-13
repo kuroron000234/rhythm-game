@@ -1,10 +1,11 @@
 import { Renderer } from '../game/renderer.ts';
-import { makeHitSound } from '../game/hitsound.ts';
+import { makeHitSounds, type HitSounds } from '../game/hitsound.ts';
 import { storage, type Settings } from '../storage.ts';
 
 export class App {
   readonly ctx = new AudioContext({ latencyHint: 'interactive' });
-  readonly hitBuffer = makeHitSound(this.ctx);
+  /** Built-in sounds, with any custom files the player loaded swapped in. */
+  sounds: HitSounds = makeHitSounds(this.ctx);
   readonly renderer: Renderer;
   readonly ui: HTMLElement;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -20,7 +21,25 @@ export class App {
   }
 
   static async create() {
-    return new App(await storage.getSettings(), document.getElementById('game') as HTMLCanvasElement);
+    const app = new App(await storage.getSettings(), document.getElementById('game') as HTMLCanvasElement);
+    await app.loadCustomSounds();
+    return app;
+  }
+
+  /** Replaces tap/critical with the player's own files when present; broken files fall back to the built-ins. */
+  async loadCustomSounds() {
+    const builtIn = makeHitSounds(this.ctx);
+    const load = async (key: 'tap' | 'critical') => {
+      const bytes = await storage.getFile(`se:${key}`);
+      if (!bytes) return builtIn[key];
+      try {
+        return await this.ctx.decodeAudioData(bytes.slice(0));
+      } catch {
+        console.warn(`custom ${key} sound could not be decoded; using the built-in one`);
+        return builtIn[key];
+      }
+    };
+    this.sounds = { tap: await load('tap'), critical: await load('critical'), hold: builtIn.hold };
   }
 
   /** Replace the current screen. `onLeave` runs when the next screen is shown. */

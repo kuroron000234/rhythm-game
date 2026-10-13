@@ -1,6 +1,7 @@
 import type { App } from './app.ts';
 import { h, keyLabel } from './dom.ts';
-import { DEFAULT_SETTINGS, type Settings } from '../storage.ts';
+import { DEFAULT_SETTINGS, storage, type Settings } from '../storage.ts';
+import { playHit } from '../game/hitsound.ts';
 import { ctxTimeAt } from '../game/clock.ts';
 
 function slider(label: string, value: number, min: number, max: number, step: number, unit: string, onInput: (v: number) => void) {
@@ -30,6 +31,30 @@ export function showSettings(app: App, back: () => void) {
     keyButtons[i].textContent = '…';
   } }, keyLabel(code)));
 
+  // custom hit sounds (the player's own files; nothing is bundled)
+  const soundRow = (key: 'tap' | 'critical', label: string) => {
+    const status = h('span.muted', {}, '');
+    const refresh = async () => { status.textContent = (await storage.getFile(`se:${key}`)) ? '自分のファイル' : '内蔵の音'; };
+    const input = h<HTMLInputElement>('input', { type: 'file', accept: 'audio/*', hidden: true, onchange: async () => {
+      const f = input.files?.[0];
+      if (!f) return;
+      const bytes = await f.arrayBuffer();
+      try { await app.ctx.decodeAudioData(bytes.slice(0)); } catch { status.textContent = '読み込めない形式です'; return; }
+      await storage.putFile(`se:${key}`, bytes);
+      await app.loadCustomSounds();
+      refresh();
+      playHit(app.ctx, app.sounds[key], s.hitVolume);
+    } });
+    refresh();
+    return h('div.setting', {}, h('span', {}, label),
+      h('div.sound-buttons', {},
+        h('button', { onclick: async () => { await app.unlockAudio(); playHit(app.ctx, app.sounds[key], s.hitVolume); } }, '試聴'),
+        h('button', { onclick: () => input.click() }, 'ファイルを選ぶ'),
+        h('button.ghost', { onclick: async () => { await storage.deleteFile(`se:${key}`); await app.loadCustomSounds(); refresh(); } }, '内蔵に戻す'),
+        input),
+      status);
+  };
+
   const calibStatus = h('div.muted', {}, 'クリック音に合わせて Space を 16 回叩くと、判定オフセットを自動で設定します');
   const calibButton = h('button', { onclick: () => calibrate() }, 'オフセット自動調整');
   let calibrating: { clicks: number[]; deltas: number[] } | null = null;
@@ -41,7 +66,7 @@ export function showSettings(app: App, back: () => void) {
     const clicks: number[] = [];
     for (let i = 0; i < 20; i++) {
       const src = app.ctx.createBufferSource();
-      src.buffer = app.hitBuffer;
+      src.buffer = app.sounds.tap;
       const g = app.ctx.createGain();
       g.gain.value = 0.8;
       src.connect(g).connect(app.ctx.destination);
@@ -74,6 +99,8 @@ export function showSettings(app: App, back: () => void) {
     visual.row, vol.row,
     h('label.setting', {}, h('span', {}, 'ヒット音'), hitToggle),
     hitVol.row,
+    soundRow('tap', 'タップ音'),
+    soundRow('critical', 'クリティカル音'),
     h('div.setting', {}, h('span', {}, 'キー配置'), h('div.keys', {}, ...keyButtons)),
     h('button.ghost', { onclick: () => { Object.assign(s, structuredClone(DEFAULT_SETTINGS)); save(); showSettings(app, back); } }, '初期設定に戻す'),
   );

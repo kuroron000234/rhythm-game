@@ -48,6 +48,7 @@ interface KV {
   get<T>(store: StoreName, key: string): Promise<T | undefined>;
   put(store: StoreName, key: string, value: unknown): Promise<void>;
   all<T>(store: StoreName): Promise<T[]>;
+  del(store: StoreName, key: string): Promise<void>;
 }
 
 function memoryKV(): KV {
@@ -56,6 +57,7 @@ function memoryKV(): KV {
     async get(s, k) { return m.get(s)!.get(k) as never; },
     async put(s, k, v) { m.get(s)!.set(k, v); },
     async all(s) { return [...m.get(s)!.values()] as never; },
+    async del(s, k) { m.get(s)!.delete(k); },
   };
 }
 
@@ -72,6 +74,7 @@ async function idbKV(): Promise<KV> {
     get: (s, k) => req(tx(s, 'readonly').get(k)),
     put: async (s, k, v) => { await req(tx(s, 'readwrite').put(v, k)); },
     all: (s) => req(tx(s, 'readonly').getAll()),
+    del: async (s, k) => { await req(tx(s, 'readwrite').delete(k)); },
   };
 }
 
@@ -99,4 +102,5 @@ export const storage = {
   putBest: (id: string, d: Difficulty, s: BestScore) => safe((k) => k.put('scores', `${id}:${d}`, s), undefined),
   getFile: (id: string) => safe((k) => k.get<ArrayBuffer>('files', id), undefined),
   putFile: (id: string, b: ArrayBuffer) => safe((k) => k.put('files', id, b), undefined),
+  deleteFile: (id: string) => safe((k) => k.del('files', id), undefined),
 };
