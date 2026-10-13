@@ -27,8 +27,8 @@ export const BPM_FOLD = [90, 180] as const;
 export const DEFAULT_BPM = 120;
 /** Ellis DP tightness: higher = stricter tempo. */
 export const BEAT_TIGHTNESS = 100;
-/** Grid counts as reliable when the ACF peak stands out, beat intervals are stable and onsets sit on the 16th grid. */
-export const GRID_MIN_PROMINENCE = 2.0;
+/** Grid counts as reliable when beat intervals are stable and onsets sit on the 16th grid.
+ * (ACF peak prominence was tried too: dense real mixes score only ~1.1–1.4, so it is not used.) */
 export const GRID_MAX_CV = 0.05;
 export const GRID_ALIGN_TOL = 0.025;
 export const GRID_MIN_ALIGNMENT = 0.75;

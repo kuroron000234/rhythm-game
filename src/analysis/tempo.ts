@@ -1,6 +1,6 @@
 import type { Features } from './spectrum.ts';
 import {
-  BEAT_TIGHTNESS, BPM_FOLD, GRID_ALIGN_TOL, GRID_MIN_ALIGNMENT, BPM_SEARCH, DEFAULT_BPM, GRID_MAX_CV, GRID_MIN_PROMINENCE,
+  BEAT_TIGHTNESS, BPM_FOLD, GRID_ALIGN_TOL, GRID_MIN_ALIGNMENT, BPM_SEARCH, DEFAULT_BPM, GRID_MAX_CV,
 } from './params.ts';
 
 export interface Slot {
@@ -129,7 +129,7 @@ function median(a: number[]) {
 
 export function trackBeats(f: Features, duration: number): Grid {
   const env = normalize(f.combinedFlux);
-  const { period, prominence } = estimatePeriod(env, f.frameRate);
+  const { period } = estimatePeriod(env, f.frameRate);
   let beats = smoothBeats(dpBeats(env, period).map((i) => i / f.frameRate));
 
   const intervals = beats.slice(1).map((b, i) => b - beats[i]);
@@ -150,7 +150,7 @@ export function trackBeats(f: Features, duration: number): Grid {
   }
   const alignment = gridAlignment(env, f.frameRate, beats);
   const reliable =
-    beats.length >= 8 && prominence >= GRID_MIN_PROMINENCE && cv <= GRID_MAX_CV && alignment >= GRID_MIN_ALIGNMENT;
+    beats.length >= 8 && cv <= GRID_MAX_CV && alignment >= GRID_MIN_ALIGNMENT;
 
   // extend the beat list to cover [0, duration]
   if (beats.length === 0) beats = [0];
