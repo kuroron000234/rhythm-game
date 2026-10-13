@@ -82,3 +82,29 @@ export const HOLD_REF_DELAY = 0.12;
 export const HOLD_MIN_LOUDNESS = 0.6;
 export const CRITICAL_SHARE = 0.03;
 export const CRITICAL_MIN_GAP_BEATS = 8;
+
+// Vocal note extraction (YIN on the separated vocal stem)
+export const VOCAL = {
+  win: 1024,
+  hop: 256,
+  minHz: 80,
+  maxHz: 1000,
+  yinThreshold: 0.3,
+  minConfidence: 0.6,
+  /** Voiced frames must be at least this fraction of the stem's 95th-percentile RMS. */
+  minLevel: 0.06,
+  /** A frame quieter than this fraction of the current note's peak ends the note (syllable gap). */
+  dipRatio: 0.35,
+  /** Unvoiced-but-loud frames bridged inside a note (pitch tracker dropouts). */
+  maxBridge: 6,
+  /** Semitones away from the running note pitch (for splitFrames frames) that start a new note. */
+  splitSemitones: 0.8,
+  splitFrames: 3,
+  minFrames: 4,
+  /** Fragments shorter than this that touch the previous note (gap ≤ fragmentGap) are merged into it (pitch glides). */
+  fragment: 0.1,
+  fragmentGap: 0.02,
+  /** Short notes this many semitones away from both neighbours are tracker glitches. */
+  glitchSemitones: 9,
+  glitchMaxDur: 0.15,
+} as const;
