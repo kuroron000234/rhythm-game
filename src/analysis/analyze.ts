@@ -8,8 +8,8 @@ import type { Features } from './spectrum.ts';
 
 export interface Analysis {
   version: number;
-  /** 'dsp' from the full mix, 'ai' from separated stems (vocal-driven), 'mug' from MuG Diffusion. */
-  source: 'dsp' | 'ai' | 'mug';
+  /** 'dsp' heuristics, 'neural' in-browser model distilled from MuG, 'ai' vocal stems, 'mug' MuG Diffusion. */
+  source: 'dsp' | 'neural' | 'ai' | 'mug';
   /** Tracked beat times (s), used to snap externally generated charts. */
   beats: number[];
   bpm: number;
