@@ -92,8 +92,13 @@ export function showTitle(app: App, go: { select: (s: LoadedSong) => void; setti
   app.renderer.setBackground(null);
 
   serverStatus().then((s) => {
-    if (!s) server.textContent = 'サーバーに接続できません。URL 読み込みには npm start が必要です(ファイルのドロップは使えます)';
-    else if (!s.ytdlp) server.textContent = 'yt-dlp が見つかりません。URL 読み込みは使えません(ファイルのドロップは使えます)';
+    if (!s) {
+      // static hosting (GitHub Pages) or no local server: everything except URL loading works in the browser
+      form.hidden = true;
+      server.textContent = 'ブラウザ版: 音声ファイル(mp3 / m4a / wav など)をドロップするか、クリックして選んでください';
+      return;
+    }
+    if (!s.ytdlp) server.textContent = 'yt-dlp が見つかりません。URL 読み込みは使えません(ファイルのドロップは使えます)';
     else server.textContent = `yt-dlp ${s.ytdlp}`;
     if (s) {
       const dev = (d: { device: string }) => (d.device === 'cuda' ? 'GPU' : 'CPU — 数分かかります');
