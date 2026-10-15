@@ -39,38 +39,15 @@ def condition(model, feature_yaml, feature_dict):
     return model.model.cond_stage_model(torch.tensor(ids, dtype=torch.float32, device=model.device))
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("audio")
-    ap.add_argument("--out", required=True)
-    ap.add_argument("--names", nargs="+")
-    ap.add_argument("--sr", type=float, nargs="+", default=[2.5, 4.0, 5.5])
-    ap.add_argument("--ln", type=float, default=0.15)
-    ap.add_argument("--steps", type=int, default=50)
-    ap.add_argument("--scale", type=float, default=5.0)
-    ap.add_argument("--seed", type=int, default=1)
-    ap.add_argument("--jack-ms", type=float, default=90)
-    ap.add_argument("--cpu", action="store_true")
-    a = ap.parse_args()
-    a.audio = os.path.abspath(a.audio)
-    a.out = os.path.abspath(a.out)
-
-    device = torch.device("cpu" if a.cpu or not torch.cuda.is_available() else "cuda")
-    t0 = time.time()
-    os.chdir(HERE)  # the code base uses relative paths for configs/templates
-    config, model = load_model(device)
-    log(stage="loaded", device=str(device), seconds=round(time.time() - t0, 1))
-
-    random.seed(a.seed); np.random.seed(a.seed); torch.manual_seed(a.seed); torch.cuda.manual_seed_all(a.seed)
-    feature_yaml = yaml.safe_load(open("configs/mug/mania_beatmap_features.yaml"))
+def chart_song(a, config, model, device, feature_yaml, base, audio_path, out_dir):
     ds = config.data.params.common_params
+    ds.max_audio_frame, model.z_length = base  # reset: both are resized per song below
     frame_s = (ds.n_fft // 4) / ds.sr
-
     with torch.no_grad():
         # audioread cannot open every container (e.g. webm/opus); hand it a plain wav
         with tempfile.TemporaryDirectory() as td:
             wav = os.path.join(td, "in.wav")
-            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", a.audio, "-ac", "1", "-ar", str(ds.sr), wav], check=True)
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", audio_path, "-ac", "1", "-ar", str(ds.sr), wav], check=True)
             audio = load_audio_without_cache(wav, ds.n_mels, ds.n_fft // 4, ds.n_fft, ds.sr, None)
         t = audio.shape[1]
         ratio = ds.max_audio_frame // model.z_length
@@ -92,7 +69,7 @@ def main():
             _, bpm, offset = gridify(hit_objects, verbose=False)
             return bpm, offset, remove_intractable_mania_mini_jacks(hit_objects, verbose=False, jack_interval=a.jack_ms)
 
-        os.makedirs(a.out, exist_ok=True)
+        os.makedirs(out_dir, exist_ok=True)
         for i, sr in enumerate(a.sr):
             feats = {"rank_status": "ranked", "sr": sr, "ln_ratio": a.ln}
             c = condition(model, feature_yaml, feats)
@@ -100,12 +77,52 @@ def main():
             z, _ = sampler.sample(S=a.steps, c=c, w=w, batch_size=1, shape=None, verbose=False,
                                   unconditional_guidance_scale=a.scale, unconditional_conditioning=uc, eta=0.0)
             x = model.model.decode(z).cpu().numpy()[0]
-            path = os.path.join(a.out, f"{a.names[i] if a.names else i}.osu")
+            path = os.path.join(out_dir, f"{a.names[i] if a.names else i}.osu")
             save_osu_file(meta, x, path=path, override={
                 "Creator": "MuG Diffusion", "Version": f"sr{sr}", "AudioFilename": "audio",
                 "Title": "t", "TitleUnicode": "t", "Artist": "a", "ArtistUnicode": "a",
                 "AIMode": "MuG Diffusion v1.0.0", "AIPrompt": json.dumps(feats)}, gridify=snap)
             log(stage="chart", index=i, total=len(a.sr), sr=sr, path=path, seconds=round(time.time() - t1, 1))
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("audio", nargs="?")
+    ap.add_argument("--out", help="output dir (single-song mode)")
+    ap.add_argument("--batch", help="TSV of <audio>\t<out dir> lines; the model is loaded once")
+    ap.add_argument("--names", nargs="+")
+    ap.add_argument("--sr", type=float, nargs="+", default=[2.5, 4.0, 5.5])
+    ap.add_argument("--ln", type=float, default=0.15)
+    ap.add_argument("--steps", type=int, default=50)
+    ap.add_argument("--scale", type=float, default=5.0)
+    ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--jack-ms", type=float, default=90)
+    ap.add_argument("--cpu", action="store_true")
+    a = ap.parse_args()
+    if a.batch:
+        jobs = [l.rstrip("\n").split("\t") for l in open(a.batch) if l.strip()]
+        jobs = [(os.path.abspath(x), os.path.abspath(y)) for x, y in jobs]
+    else:
+        if not (a.audio and a.out):
+            ap.error("give AUDIO and --out, or --batch")
+        jobs = [(os.path.abspath(a.audio), os.path.abspath(a.out))]
+
+    device = torch.device("cpu" if a.cpu or not torch.cuda.is_available() else "cuda")
+    t0 = time.time()
+    os.chdir(HERE)  # the code base uses relative paths for configs/templates
+    config, model = load_model(device)
+    log(stage="loaded", device=str(device), seconds=round(time.time() - t0, 1))
+    random.seed(a.seed); np.random.seed(a.seed); torch.manual_seed(a.seed); torch.cuda.manual_seed_all(a.seed)
+    feature_yaml = yaml.safe_load(open("configs/mug/mania_beatmap_features.yaml"))
+    base = (config.data.params.common_params.max_audio_frame, model.z_length)
+    for k, (audio_path, out_dir) in enumerate(jobs):
+        try:
+            chart_song(a, config, model, device, feature_yaml, base, audio_path, out_dir)
+            log(stage="song", index=k, total=len(jobs), out=out_dir)
+        except Exception as e:  # keep the batch going; single-song mode re-raises below
+            if not a.batch:
+                raise
+            log(stage="song-error", index=k, out=out_dir, error=str(e)[:200])
     log(stage="done", seconds=round(time.time() - t0, 1))
 
 

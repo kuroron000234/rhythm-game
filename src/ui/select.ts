@@ -37,10 +37,12 @@ export function showSelect(app: App, song: LoadedSong, go: { play: (d: Difficult
   if (analysis.source === 'mug') showBadge('AI 譜面 · MuG(人の譜面から学習)', 'ready');
   else if (analysis.source === 'ai') showBadge('AI 譜面 · ボーカル連動', 'ready');
   else {
+    if (analysis.source === 'neural') showBadge('AI 譜面 · ブラウザ内', 'ready');
     aiKind().then((which) => {
       if (!which || left) return;
       unwatch = watchAi(app.ctx, entry, analysis, which, (st) => {
         if (left) return;
+        // with a local server, MuG still replaces the in-browser chart when it is ready
         if (st.state === 'queued') showBadge('AI 解析待ち…(今の譜面でも遊べます)');
         else if (st.state === 'running') showBadge(`${which === 'mug' ? 'AI 譜面を作成中' : 'AI 分離中'}${st.progress > 0 ? ` ${Math.round(st.progress * 100)}%` : '…'}(今の譜面でも遊べます)`);
         else if (st.state === 'analyzing') showBadge('AI 譜面を生成中…');

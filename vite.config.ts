@@ -1,6 +1,8 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  // GitHub Pages serves the site under /<repo>/
+  base: process.env.BASE ?? '/',
   server: {
     host: '127.0.0.1',
     proxy: { '/api': 'http://127.0.0.1:5174' },
