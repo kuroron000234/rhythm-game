@@ -1,63 +1,61 @@
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { decodeNotes } from '../../src/analysis/neural.ts';
+import { decodeChart, mulberry32, peaks, type LaneWeights } from '../../src/analysis/neural.ts';
 
-const hasNumpy = (() => { try { execFileSync('python3', ['-c', 'import numpy']); return true; } catch { return false; } })();
+const hasTorch = (() => { try { execFileSync('python3', ['-c', 'import torch, numpy']); return true; } catch { return false; } })();
 
-/** Deterministic smooth random probabilities with peaks and hold plateaus. */
-function synth(T: number, seed: number) {
-  let s = seed;
-  const r = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-  const onset = new Float32Array(4 * T), hold = new Float32Array(4 * T);
-  for (let lane = 0; lane < 4; lane++) {
-    for (let f = 0; f < T; f++) onset[lane * T + f] = 0.05 * r();
-    for (let k = 0; k < T / 40; k++) {
-      const c = Math.floor(r() * T), amp = 0.3 + 0.7 * r();
-      for (let d = -2; d <= 2; d++) if (c + d >= 0 && c + d < T) onset[lane * T + c + d] = Math.max(onset[lane * T + c + d], amp * (1 - Math.abs(d) * 0.3));
-      if (r() < 0.3) for (let d = 1; d < 5 + r() * 60 && c + d < T; d++) hold[lane * T + c + d] = 0.6 + 0.3 * r();
-    }
-  }
-  return { onset, hold };
-}
-
-describe('decodeNotes', () => {
-  it('finds peaks above the threshold and turns plateaus into holds', () => {
-    const T = 100;
-    const onset = new Float32Array(4 * T), hold = new Float32Array(4 * T);
-    onset[10] = 0.9; onset[11] = 0.5; // lane 0 note at frame 10
-    onset[T + 50] = 0.3; // lane 1 below threshold
-    onset[2 * T + 30] = 0.8;
-    for (let f = 31; f < 60; f++) hold[2 * T + f] = 0.9; // ~0.34s hold
-    const n = decodeNotes(onset, hold, T, 0.4);
-    expect(n.length).toBe(2);
-    expect(n[0]).toMatchObject({ lane: 0 });
-    expect(n[0].dur).toBeUndefined();
-    expect(n[1].lane).toBe(2);
-    expect(n[1].dur).toBeGreaterThan(0.3);
+describe('peaks / mulberry32', () => {
+  it('finds spaced local maxima above the threshold', () => {
+    const p = [0, 0.2, 0.9, 0.5, 0, 0, 0, 0, 0.6, 0.3, 0.1];
+    expect(peaks(p, 0.4)).toEqual([2, 8]);
   });
+  it('matches the reference mulberry32 sequence', () => {
+    const r = mulberry32(42);
+    expect([r(), r(), r()].map((x) => x.toFixed(6))).toEqual(['0.601104', '0.448291', '0.852466']);
+  });
+});
 
-  it.skipIf(!hasNumpy)('matches ml/train.py decode() exactly', () => {
-    const T = 3000;
-    const { onset, hold } = synth(T, 42);
-    const dir = mkdtempSync(join(tmpdir(), 'dec-'));
-    writeFileSync(join(dir, 'o.f32'), Buffer.from(onset.buffer));
-    writeFileSync(join(dir, 'h.f32'), Buffer.from(hold.buffer));
-    const py = execFileSync('python3', ['-c', `
-import sys, json, numpy as np
+describe.skipIf(!hasTorch)('decodeChart vs ml/train.py decode()', () => {
+  // random LaneNet + random frame outputs, decoded by Python; TS must produce the same chart
+  const dir = mkdtempSync(join(tmpdir(), 'lane-'));
+  execFileSync('python3', ['-c', `
+import sys, json, numpy as np, torch
 sys.path.insert(0, 'ml')
+from model import LaneNet
 from train import decode
-o = np.fromfile('${dir}/o.f32', dtype='<f4').reshape(4, ${T}); h = np.fromfile('${dir}/h.f32', dtype='<f4').reshape(4, ${T})
-print(json.dumps([[t, l, e] for t, l, e in decode(o, h, 0.45)]))`]).toString();
-    const ref = JSON.parse(py) as [number, number, number | null][];
-    const ts = decodeNotes(onset, hold, T, 0.45);
-    expect(ts.length).toBe(ref.length);
-    ts.forEach((n, i) => {
-      expect(n.lane).toBe(ref[i][1]);
-      expect(n.t).toBeCloseTo(ref[i][0], 6);
-      expect(n.dur === undefined).toBe(ref[i][2] === null);
+torch.manual_seed(3)
+lane = LaneNet(32).eval()
+rng = np.random.default_rng(5)
+T = 2500
+onset = np.clip(rng.random(T) ** 6 * 1.5, 0, 1).astype(np.float32)
+chord = rng.normal(size=(4, T)).astype(np.float32); chord[0] += 1.5
+feat = np.tanh(rng.normal(size=(64, T))).astype(np.float32)
+sd = {k: v.detach().numpy().astype(np.float64).ravel().tolist() for k, v in lane.state_dict().items()}
+w = {"hidden": 32, "input": LaneNet.IN, "w_ih": sd["cell.weight_ih"], "w_hh": sd["cell.weight_hh"], "b_ih": sd["cell.bias_ih"],
+     "b_hh": sd["cell.bias_hh"], "lanes_w": sd["lanes.weight"], "lanes_b": sd["lanes.bias"], "holds_w": sd["holds.weight"], "holds_b": sd["holds.bias"]}
+out = {"T": T, "onset": onset.tolist(), "chord": chord.ravel().tolist(), "feat": feat.ravel().tolist(), "w": w}
+for temp in (0, 1):
+    out[f"ref{temp}"] = [[t, l, e] for t, l, e in decode(onset, chord, feat, lane, 0.5, temp=temp, seed=7)]
+json.dump(out, open('${dir}/case.json', 'w'))
+`]);
+  const c = JSON.parse(readFileSync(join(dir, 'case.json'), 'utf8')) as {
+    T: number; onset: number[]; chord: number[]; feat: number[]; w: LaneWeights; ref0: [number, number, number | null][]; ref1: [number, number, number | null][];
+  };
+  for (const temp of [0, 1] as const) {
+    it(`gives the same notes and holds (temp ${temp})`, () => {
+      const ref = temp ? c.ref1 : c.ref0;
+      const ts = decodeChart(c.onset, c.chord, c.feat, c.T, c.w, 0.5, temp, 7);
+      expect(ref.length).toBeGreaterThan(30);
+      expect(ts.length).toBe(ref.length);
+      ts.forEach((n, i) => {
+        expect(n.lane).toBe(ref[i][1]);
+        expect(n.t).toBeCloseTo(ref[i][0], 6);
+        if (ref[i][2] === null) expect(n.dur).toBeUndefined();
+        else expect(n.t + n.dur!).toBeCloseTo(ref[i][2]!, 6);
+      });
     });
-  });
+  }
 });

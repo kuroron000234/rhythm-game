@@ -14,8 +14,10 @@ case "$1" in
     rsync -a ml/*.py "$RIG:rg-train/ml/"
     rsync -a "$DATA/manifest.json" "$DATA/feats" "$DATA/teacher" "$RIG:rg-train/data/" ;;
   start)
-    ssh "$RIG" "sudo systemctl stop ai-router.service power-proxy.service; mkdir -p ~/rg-train/runs/$2; cd ~/rg-train/ml && \
-      CUDA_VISIBLE_DEVICES=$4 nohup python3 train.py --data ~/rg-train/data --out ~/rg-train/runs/$2 $3 > ~/rg-train/runs/$2/stdout.log 2>&1 &"
+    # the whole background job must have its stdio redirected or ssh waits for it
+    ssh "$RIG" "sudo systemctl stop ai-router.service power-proxy.service; mkdir -p ~/rg-train/runs/$2; \
+      (cd ~/rg-train/ml && CUDA_VISIBLE_DEVICES=$4 exec python3 train.py --data ~/rg-train/data --out ~/rg-train/runs/$2 $3) \
+      > ~/rg-train/runs/$2/stdout.log 2>&1 < /dev/null &"
     echo "started $2 on GPU $4" ;;
   status)
     ssh "$RIG" 'for d in ~/rg-train/runs/*/; do n=$(basename $d); e=$(grep "\"eval\"" $d/log.jsonl 2>/dev/null | tail -1 | python3 -c "import sys,json; l=sys.stdin.read().strip(); j=json.loads(l) if l else {}; print(j.get(\"step\"), j.get(\"score\"), {k: j[k][\"f1_time\"] for k in (\"easy\",\"normal\",\"hard\") if k in j})"); t=$(tail -1 $d/log.jsonl 2>/dev/null | cut -c1-80); echo "$n | $e | $t"; done; nvidia-smi --query-gpu=index,utilization.gpu,memory.used --format=csv,noheader' ;;

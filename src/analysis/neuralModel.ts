@@ -3,13 +3,16 @@ import * as ort from 'onnxruntime-web/wasm';
 import wasmUrl from 'onnxruntime-web/ort-wasm-simd-threaded.wasm?url';
 import type { Chart, Difficulty } from './chart.ts';
 import { logMel } from './mel.ts';
-import { decodeNotes } from './neural.ts';
+import { decodeChart, type LaneWeights } from './neural.ts';
 import { chartFromOsu } from './osu.ts';
 
 export interface ModelMeta {
   version: string;
-  /** Note-start thresholds calibrated so note counts match the teacher (MuG) per difficulty. */
+  /** Note-start thresholds calibrated so event counts match the teacher (MuG) per difficulty. */
   thresholds: Record<Difficulty, number>;
+  /** Sampling temperature for lanes / chord sizes / hold lengths (MuG itself is a sampler). */
+  temperature: number;
+  lane: LaneWeights;
 }
 
 const DIFFS: Difficulty[] = ['easy', 'normal', 'hard'];
@@ -27,7 +30,7 @@ function load(base: string) {
 
 /** pcm: mono 22050Hz. Returns the three charts snapped to the song's beat grid. */
 export async function neuralCharts(
-  pcm: Float32Array, beats: number[], bpm: number, base: string, onProgress?: (p: number) => void,
+  pcm: Float32Array, beats: number[], bpm: number, base: string, seed: number, onProgress?: (p: number) => void,
 ): Promise<{ charts: Record<Difficulty, Chart>; version: string }> {
   const { session, meta } = await load(base);
   const { data, frames: T } = logMel(pcm);
@@ -36,10 +39,8 @@ export async function neuralCharts(
   const charts = {} as Record<Difficulty, Chart>;
   for (const [i, d] of DIFFS.entries()) {
     const out = await session.run({ mel, diff: new ort.Tensor('int64', BigInt64Array.from([BigInt(i)]), [1]) });
-    const logits = out.logits.data as Float32Array; // [1, 8, T]
-    const prob = new Float32Array(logits.length);
-    for (let k = 0; k < logits.length; k++) prob[k] = 1 / (1 + Math.exp(-logits[k]));
-    const raw = decodeNotes(prob.subarray(0, 4 * T), prob.subarray(4 * T, 8 * T), T, meta.thresholds[d]);
+    const raw = decodeChart(out.onset.data as Float32Array, out.chord.data as Float32Array, out.feat.data as Float32Array, T,
+      meta.lane, meta.thresholds[d], meta.temperature, seed + i);
     charts[d] = chartFromOsu(raw, beats, d, bpm);
     onProgress?.(0.2 + (0.8 * (i + 1)) / 3);
   }

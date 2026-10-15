@@ -1,5 +1,6 @@
 import { analyze, analyzeWithStems } from './analyze.ts';
 import { neuralCharts } from './neuralModel.ts';
+import { hashSeed } from './rng.ts';
 
 type Job =
   | { mode: 'mix'; pcm: Float32Array; sr: number; seed: string }
@@ -15,7 +16,7 @@ self.onmessage = async (e: MessageEvent<Job>) => {
     if (j.mode === 'mix') {
       // in-browser AI charts (distilled from MuG); the heuristic charts stay if the model is unavailable
       try {
-        const n = await neuralCharts(j.pcm, analysis.beats, analysis.bpm, import.meta.env.BASE_URL, (p) => progress(0.5 + 0.5 * p, 'AI 譜面を生成'));
+        const n = await neuralCharts(j.pcm, analysis.beats, analysis.bpm, import.meta.env.BASE_URL, hashSeed(j.seed), (p) => progress(0.5 + 0.5 * p, 'AI 譜面を生成'));
         analysis.charts = n.charts;
         analysis.source = 'neural';
       } catch (err) {
