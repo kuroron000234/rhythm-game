@@ -38,7 +38,7 @@ w = {"hidden": 32, "input": LaneNet.IN, "w_ih": sd["cell.weight_ih"], "w_hh": sd
      "b_hh": sd["cell.bias_hh"], "lanes_w": sd["lanes.weight"], "lanes_b": sd["lanes.bias"], "holds_w": sd["holds.weight"], "holds_b": sd["holds.bias"]}
 out = {"T": T, "onset": onset.tolist(), "chord": chord.ravel().tolist(), "feat": feat.ravel().tolist(), "w": w}
 for temp in (0, 1):
-    out[f"ref{temp}"] = [[t, l, e] for t, l, e in decode(onset, chord, feat, lane, 0.5, temp=temp, seed=7)]
+    out[f"ref{temp}"] = [[t, l, e] for t, l, e in decode(onset, chord, feat, lane, 0.5, temp=temp, seed=7, chord_bias=0.8)]
 json.dump(out, open('${dir}/case.json', 'w'))
 `]);
   const c = JSON.parse(readFileSync(join(dir, 'case.json'), 'utf8')) as {
@@ -47,7 +47,7 @@ json.dump(out, open('${dir}/case.json', 'w'))
   for (const temp of [0, 1] as const) {
     it(`gives the same notes and holds (temp ${temp})`, () => {
       const ref = temp ? c.ref1 : c.ref0;
-      const ts = decodeChart(c.onset, c.chord, c.feat, c.T, c.w, 0.5, temp, 7);
+      const ts = decodeChart(c.onset, c.chord, c.feat, c.T, c.w, 0.5, temp, 7, 0.8);
       expect(ref.length).toBeGreaterThan(30);
       expect(ts.length).toBe(ref.length);
       ts.forEach((n, i) => {

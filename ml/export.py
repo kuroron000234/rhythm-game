@@ -35,12 +35,32 @@ torch.onnx.export(wrapped, (torch.randn(1, 64, 1500), torch.tensor([1])), onnx_p
                   dynamic_axes={"mel": {2: "T"}, "onset": {1: "T"}, "chord": {2: "T"}, "feat": {2: "T"}},
                   opset_version=17, dynamo=False)
 
+# chord calibration on validation songs: bias on multi-note sizes so the chord share matches the teacher
+import json as _json
+from dataset import DIFFS, parse_osu
+from train import decode, pattern_stats, predict
+data = os.path.expanduser(os.environ.get("RG_DATA", "~/rg-data"))
+songs = [s for s in _json.load(open(os.path.join(data, "manifest.json"))) if s.get("split") == "val"][:12]
+chord_bias = {}
+for i, d in enumerate(DIFFS):
+    outs = [predict(frame, np.load(os.path.join(data, "feats", f"{s['id']}.npz"))["mel"], i, "cpu") for s in songs]
+    target = pattern_stats([parse_osu(os.path.join(data, "teacher", s["id"], f"{d}.osu")) for s in songs])["chord"]
+    share = lambda b: pattern_stats([decode(o, c, f, lane, ck["eval"][d]["thr"], 1.0, 1 + k, b) for k, (o, c, f) in enumerate(outs)])["chord"]
+    lo, hi = -3.0, 6.0
+    for _ in range(9):
+        mid = (lo + hi) / 2
+        if share(mid) > target: lo = mid
+        else: hi = mid
+    chord_bias[d] = round((lo + hi) / 2, 3)
+    print(f"{d}: chord bias {chord_bias[d]} (teacher chord share {target})", flush=True)
+
 sd = {k: v.detach().numpy().astype(np.float64) for k, v in lane.state_dict().items()}
 r = lambda a: [round(float(v), 7) for v in a.ravel()]
 meta = {
     "version": f"{os.path.basename(os.path.dirname(os.path.abspath(ckpt_path)))}-s{ck['step']}",
     "thresholds": {d: ck["eval"][d]["thr"] for d in ("easy", "normal", "hard")},
     "temperature": 1.0,
+    "chordBias": chord_bias,
     "lane": {"hidden": lane.hidden, "input": LaneNet.IN, "w_ih": r(sd["cell.weight_ih"]), "w_hh": r(sd["cell.weight_hh"]),
              "b_ih": r(sd["cell.bias_ih"]), "b_hh": r(sd["cell.bias_hh"]), "lanes_w": r(sd["lanes.weight"]),
              "lanes_b": r(sd["lanes.bias"]), "holds_w": r(sd["holds.weight"]), "holds_b": r(sd["holds.bias"])},

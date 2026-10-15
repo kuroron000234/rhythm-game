@@ -12,6 +12,8 @@ export interface ModelMeta {
   thresholds: Record<Difficulty, number>;
   /** Sampling temperature for lanes / chord sizes / hold lengths (MuG itself is a sampler). */
   temperature: number;
+  /** Per-difficulty bias subtracted from chord-size logits so the chord share matches the teacher. */
+  chordBias?: Record<Difficulty, number>;
   lane: LaneWeights;
 }
 
@@ -40,7 +42,7 @@ export async function neuralCharts(
   for (const [i, d] of DIFFS.entries()) {
     const out = await session.run({ mel, diff: new ort.Tensor('int64', BigInt64Array.from([BigInt(i)]), [1]) });
     const raw = decodeChart(out.onset.data as Float32Array, out.chord.data as Float32Array, out.feat.data as Float32Array, T,
-      meta.lane, meta.thresholds[d], meta.temperature, seed + i);
+      meta.lane, meta.thresholds[d], meta.temperature, seed + i, meta.chordBias?.[d] ?? 0);
     charts[d] = chartFromOsu(raw, beats, d, bpm);
     onProgress?.(0.2 + (0.8 * (i + 1)) / 3);
   }

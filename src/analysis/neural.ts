@@ -101,7 +101,7 @@ export function peaks(p: ArrayLike<number>, thr: number): number[] {
  */
 export function decodeChart(
   onsetProb: ArrayLike<number>, chordLogits: ArrayLike<number>, feat: ArrayLike<number>, T: number,
-  weights: LaneWeights, thr: number, temp = 1, seed = 1,
+  weights: LaneWeights, thr: number, temp = 1, seed = 1, chordBias = 0,
 ): RawNote[] {
   const rnd = mulberry32(seed);
   const gru = new LaneGRU(weights);
@@ -111,7 +111,8 @@ export function decodeChart(
   const x = new Float64Array(weights.input);
   for (const f of peaks(onsetProb, thr)) {
     const t = f * FRAME;
-    const size = pick([0, 1, 2, 3].map((k) => chordLogits[k * T + f]), [true, true, true, true], temp, rnd) + 1;
+    // chordBias (calibrated per difficulty) is subtracted from the multi-note sizes
+    const size = pick([0, 1, 2, 3].map((k) => chordLogits[k * T + f] - (k ? chordBias : 0)), [true, true, true, true], temp, rnd) + 1;
     let held = 0;
     for (let l = 0; l < 4; l++) if (laneEnd[l] > t) held |= 1 << l;
     x.fill(0);

@@ -74,7 +74,7 @@ def pick(logits, allowed, temp, rnd):
 
 
 @torch.no_grad()
-def decode(onset_p, chord_logits, feat, lane: LaneNet, thr: float, temp: float = 1.0, seed: int = 1):
+def decode(onset_p, chord_logits, feat, lane: LaneNet, thr: float, temp: float = 1.0, seed: int = 1, chord_bias: float = 0.0):
     """Mirror of src/analysis/neural.ts decode(): returns [(t, lane, end|None)]."""
     rnd = mulberry32(seed)
     notes = []
@@ -83,7 +83,9 @@ def decode(onset_p, chord_logits, feat, lane: LaneNet, thr: float, temp: float =
     lane_end = [-10.0] * 4
     for f in peaks(onset_p, thr):
         t = f * FRAME
-        size = pick(chord_logits[:, f].tolist(), [True] * 4, temp, rnd) + 1
+        cl = chord_logits[:, f].tolist()
+        cl = [cl[0]] + [v - chord_bias for v in cl[1:]]      # calibration: fewer (bias > 0) or more chords
+        size = pick(cl, [True] * 4, temp, rnd) + 1
         held = sum(1 << l for l in range(4) if lane_end[l] > t)
         x = torch.tensor(lane_input(feat[:, f], size, t - last_t, prev, held))[None]
         lg, hl, h = lane.step(x, h)
@@ -121,19 +123,24 @@ def f1(pred, ref, tol=0.05, lanes=True):
     return 0.0 if tp == 0 else 2 * p * r / (p + r)
 
 
-def pattern_stats(notes):
-    """Lane-movement histogram between consecutive single notes, chord share, hold share."""
-    by = {}
-    for t, l, e in notes:
-        by.setdefault(round(t, 3), []).append((l, e))
-    ev = [by[k] for k in sorted(by)]
-    moves = np.zeros(4)
-    for a, b in zip(ev, ev[1:]):
-        if len(a) == 1 and len(b) == 1:
-            moves[abs(a[0][0] - b[0][0])] += 1
+def pattern_stats(charts):
+    """Lane-movement histogram between consecutive single notes, chord share, hold share.
+    `charts` is a list of per-song note lists (songs must not be merged: their times would collide)."""
+    moves, events, chords, notes_n, holds = np.zeros(4), 0, 0, 0, 0
+    for notes in charts:
+        by = {}
+        for t, l, e in notes:
+            by.setdefault(round(t, 3), []).append((l, e))
+        ev = [by[k] for k in sorted(by)]
+        for a, b in zip(ev, ev[1:]):
+            if len(a) == 1 and len(b) == 1:
+                moves[abs(a[0][0] - b[0][0])] += 1
+        events += len(ev)
+        chords += sum(len(e) > 1 for e in ev)
+        notes_n += len(notes)
+        holds += sum(e is not None for _, _, e in notes)
     return {"moves": (moves / max(1, moves.sum())).round(3).tolist(),
-            "chord": round(sum(len(e) > 1 for e in ev) / max(1, len(ev)), 3),
-            "hold": round(sum(e is not None for _, _, e in notes) / max(1, len(notes)), 3)}
+            "chord": round(chords / max(1, events), 3), "hold": round(holds / max(1, notes_n), 3)}
 
 
 @torch.no_grad()
@@ -157,7 +164,7 @@ def evaluate(frame, lane, val_items, device):
             else: hi = mid
         thr = (lo + hi) / 2
         preds = [decode(o, c, f, lane_cpu, thr) for o, c, f in outs]
-        ps, rs = pattern_stats([n for p in preds for n in p]), pattern_stats([n for r in refs for n in r])
+        ps, rs = pattern_stats(preds), pattern_stats(refs)
         res[name] = {"thr": round(thr, 4),
                      "f1_time": round(float(np.mean([f1(p, r, lanes=False) for p, r in zip(preds, refs)])), 4),
                      "f1_lane": round(float(np.mean([f1(p, r) for p, r in zip(preds, refs)])), 4),
