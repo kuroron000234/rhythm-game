@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,6 +20,11 @@ describe('peaks / mulberry32', () => {
 
 describe.skipIf(!hasTorch)('decodeChart vs ml/train.py decode()', () => {
   // random LaneNet + random frame outputs, decoded by Python; TS must produce the same chart
+  // generated in beforeAll: a skipped describe still runs its body at collection time
+  let c: {
+    T: number; onset: number[]; chord: number[]; feat: number[]; w: LaneWeights; ref0: [number, number, number | null][]; ref1: [number, number, number | null][];
+  };
+  beforeAll(() => {
   const dir = mkdtempSync(join(tmpdir(), 'lane-'));
   execFileSync('python3', ['-c', `
 import sys, json, numpy as np, torch
@@ -41,9 +46,8 @@ for temp in (0, 1):
     out[f"ref{temp}"] = [[t, l, e] for t, l, e in decode(onset, chord, feat, lane, 0.5, temp=temp, seed=7, chord_bias=0.8)]
 json.dump(out, open('${dir}/case.json', 'w'))
 `]);
-  const c = JSON.parse(readFileSync(join(dir, 'case.json'), 'utf8')) as {
-    T: number; onset: number[]; chord: number[]; feat: number[]; w: LaneWeights; ref0: [number, number, number | null][]; ref1: [number, number, number | null][];
-  };
+  c = JSON.parse(readFileSync(join(dir, 'case.json'), 'utf8'));
+  });
   for (const temp of [0, 1] as const) {
     it(`gives the same notes and holds (temp ${temp})`, () => {
       const ref = temp ? c.ref1 : c.ref0;
