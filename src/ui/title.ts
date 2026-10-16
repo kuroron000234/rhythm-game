@@ -1,6 +1,7 @@
 import type { App } from './app.ts';
 import { h, fmtTime } from './dom.ts';
-import { fromFile, fromHistory, fromUrl, prepare, serverStatus, LoadError, type LoadedSong } from '../loader.ts';
+import { fromAudius, fromFile, fromHistory, fromUrl, prepare, serverStatus, LoadError, type LoadedSong } from '../loader.ts';
+import { AUDIUS_PRIVACY_URL, AUDIUS_TERMS_URL, searchTracks, type AudiusTrack } from '../audius.ts';
 import { storage, type SongEntry } from '../storage.ts';
 import type { Difficulty } from '../analysis/chart.ts';
 
@@ -44,7 +45,7 @@ export function showTitle(app: App, go: { select: (s: LoadedSong) => void; setti
     }
   }
 
-  const input = h<HTMLInputElement>('input.url', { type: 'url', placeholder: 'YouTube などの URL を貼り付け', autofocus: true });
+  const input = h<HTMLInputElement>('input.url', { type: 'url', placeholder: 'YouTube などの URL を貼り付け(ローカルサーバー版のみ)' });
   const form = h('form.url-form', {
     onsubmit: (e: Event) => {
       e.preventDefault();
@@ -52,6 +53,41 @@ export function showTitle(app: App, go: { select: (s: LoadedSong) => void; setti
       if (url) load(() => fromUrl(url, setStatus));
     },
   }, input, h('button.primary', { type: 'submit' }, '読み込む'));
+
+  // song search (Audius): pick a track and it is charted on the spot
+  const results = h('div.results');
+  const searchInput = h<HTMLInputElement>('input.url', { type: 'search', placeholder: '曲名・アーティスト名で検索', autofocus: true });
+  let searchSeq = 0;
+  async function search(q: string) {
+    const seq = ++searchSeq;
+    if (!q.trim()) { results.replaceChildren(); return; }
+    results.replaceChildren(h('p.muted', {}, '検索中…'));
+    try {
+      const tracks = await searchTracks(q);
+      if (seq !== searchSeq) return;
+      results.replaceChildren(...(tracks.length
+        ? tracks.slice(0, 12).map(trackButton)
+        : [h('p.muted', {}, '見つかりませんでした。別の言葉で検索するか、手元の音声ファイルを使ってください')]));
+    } catch {
+      if (seq === searchSeq) results.replaceChildren(h('p.muted', {}, '検索できませんでした。時間をおいて試してください'));
+    }
+  }
+  const trackButton = (t: AudiusTrack) => h('button.song', { onclick: () => load(() => fromAudius(t, setStatus)) },
+    t.artwork ? h('img', { src: t.artwork, alt: '', loading: 'lazy' }) : h('div.noimg', {}, '♪'),
+    h('div.song-info', {}, h('div.song-title', {}, t.title), h('div.muted', {}, `${t.artist} · ${fmtTime(t.duration)}`)));
+  let debounce = 0;
+  searchInput.addEventListener('input', () => {
+    clearTimeout(debounce);
+    debounce = window.setTimeout(() => search(searchInput.value), 450);
+  });
+  const searchForm = h('form.url-form', {
+    onsubmit: (e: Event) => { e.preventDefault(); clearTimeout(debounce); search(searchInput.value); },
+  }, searchInput, h('button.primary', { type: 'submit' }, '検索'));
+  const audiusNote = h('p.audius-note', {},
+    '曲は ', h('a', { href: 'https://audius.co', target: '_blank', rel: 'noopener' }, 'Audius'),
+    ' の公開楽曲をその場で再生します(保存はしません)。',
+    h('a', { href: AUDIUS_PRIVACY_URL, target: '_blank', rel: 'noopener' }, 'プライバシーポリシー'), ' · ',
+    h('a', { href: AUDIUS_TERMS_URL, target: '_blank', rel: 'noopener' }, 'API 規約'));
 
   const fileInput = h<HTMLInputElement>('input', { type: 'file', accept: 'audio/*,video/*', hidden: true, onchange: () => {
     const f = fileInput.files?.[0];
@@ -65,7 +101,7 @@ export function showTitle(app: App, go: { select: (s: LoadedSong) => void; setti
     {},
     h('h1.logo', {}, 'AUTO', h('span', {}, 'BEAT')),
     h('p.tagline', {}, '好きな曲が、その場で譜面になる'),
-    form, drop, status, bar, errorBox, server,
+    searchForm, results, audiusNote, status, bar, errorBox, drop, form, server,
     h('div.row', {}, h('h2', {}, '履歴'), h('button.ghost', { onclick: go.settings }, '設定')),
     history,
   );
@@ -95,7 +131,7 @@ export function showTitle(app: App, go: { select: (s: LoadedSong) => void; setti
     if (!s) {
       // static hosting (GitHub Pages) or no local server: everything except URL loading works in the browser
       form.hidden = true;
-      server.textContent = 'ブラウザ版: 音声ファイル(mp3 / m4a / wav など)をドロップするか、クリックして選んでください';
+      server.textContent = '手元の音声ファイル(mp3 / m4a / wav など)をドロップしても遊べます';
       return;
     }
     if (!s.ytdlp) server.textContent = 'yt-dlp が見つかりません。URL 読み込みは使えません(ファイルのドロップは使えます)';

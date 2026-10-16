@@ -4,6 +4,7 @@ import type { LoadedSong } from '../loader.ts';
 import type { PlayResult } from './play.ts';
 import { rankOf } from '../game/judge.ts';
 import { storage } from '../storage.ts';
+import { credit } from './credit.ts';
 
 export async function showResult(app: App, song: LoadedSong, r: PlayResult, go: { retry: () => void; select: () => void; title: () => void }) {
   const st = r.state;
@@ -28,6 +29,7 @@ export async function showResult(app: App, song: LoadedSong, r: PlayResult, go: 
 
   const root = h('div.screen.result', {},
     h('div.muted', {}, `${song.entry.title} · ${r.difficulty.toUpperCase()}`),
+    credit(song.entry),
     h(`div.big-rank.r${rank}`, {}, rank),
     h('div.score', {}, st.score.toLocaleString(), isNew ? h('span.new', {}, 'NEW RECORD') : null),
     h(`div.clear.${cleared ? 'ok' : 'ng'}`, {}, cleared ? 'CLEAR' : 'FAILED'),
