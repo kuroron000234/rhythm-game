@@ -42,7 +42,7 @@ h2 { margin: 0; font-size: 18px; letter-spacing: .04em; }
 .url:focus { border-color: var(--cyan); }
 .drop { border: 1.5px dashed var(--line); border-radius: 10px; padding: 22px; text-align: center; color: var(--muted); cursor: pointer; }
 .drop:hover, .dragging .drop { border-color: var(--cyan); color: var(--text); background: rgba(41,201,240,.06); }
-.busy form, .busy .drop, .busy .history { opacity: .4; pointer-events: none; }
+.busy form, .busy .drop, .busy .history, .busy .results { opacity: .4; pointer-events: none; }
 .status { min-height: 1.2em; color: var(--cyan); font-size: 14px; }
 .progress { height: 4px; background: rgba(255,255,255,.08); border-radius: 2px; overflow: hidden; }
 .progress-fill { height: 100%; width: 0; background: var(--cyan); transition: width .2s; }
@@ -51,7 +51,11 @@ h2 { margin: 0; font-size: 18px; letter-spacing: .04em; }
 .server { font-size: 12px; color: var(--muted); }
 .server.warn { color: var(--gold); }
 .row { display: flex; justify-content: space-between; align-items: center; margin-top: 18px; }
-.history { display: flex; flex-direction: column; gap: 6px; }
+.history, .results { display: flex; flex-direction: column; gap: 6px; }
+.results:empty { display: none; }
+.audius-note, .credit { font-size: 12px; color: var(--muted); margin: 0; }
+.audius-note a, .credit a { color: var(--cyan); }
+.credit { text-align: center; }
 .song { display: flex; align-items: center; gap: 12px; text-align: left; padding: 8px; }
 .song img, .noimg { width: 64px; height: 36px; object-fit: cover; border-radius: 4px; flex: none; background: #1a1a30; display: grid; place-items: center; color: var(--muted); }
 .song-info { flex: 1; min-width: 0; }

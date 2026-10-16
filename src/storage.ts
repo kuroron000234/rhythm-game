@@ -7,8 +7,11 @@ export interface SongEntry {
   title: string;
   duration: number;
   thumbnail: string | null;
-  source: 'url' | 'file';
+  source: 'url' | 'file' | 'audius';
   url?: string;
+  /** Audius tracks: artist name and the public track page (shown as credit). */
+  artist?: string;
+  link?: string;
   lastPlayed: number;
 }
 

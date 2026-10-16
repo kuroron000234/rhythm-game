@@ -3,6 +3,7 @@
 Usage: python ml/collect.py --per-genre 30 [--out ~/rg-data]
 Writes <out>/audio/<id>.<ext> and <out>/manifest.json (id, title, genre, duration, split).
 Idempotent: re-running tops the collection up to the requested size.
+Never add Audius tracks here: the Audius API terms prohibit training models on their content.
 """
 import argparse, json, os, random, re, subprocess, sys
 

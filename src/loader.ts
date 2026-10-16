@@ -1,6 +1,7 @@
 import type { Analysis } from './analysis/analyze.ts';
 import { CHART_VERSION, SR } from './analysis/params.ts';
 import { storage, type SongEntry } from './storage.ts';
+import { fetchAudio, fetchTrack, type AudiusTrack } from './audius.ts';
 
 export type Status = (message: string, progress?: number) => void;
 
@@ -59,7 +60,27 @@ export async function fromFile(file: File): Promise<{ entry: SongEntry; bytes: A
   return { entry, bytes };
 }
 
+export async function fromAudius(track: AudiusTrack, status: Status): Promise<{ entry: SongEntry; bytes: ArrayBuffer }> {
+  status('Audius から音声を取得中…');
+  let bytes: ArrayBuffer;
+  try {
+    bytes = await fetchAudio(track.id);
+  } catch {
+    throw new LoadError('Audius から音声を取得できませんでした', '時間をおいて試すか、別の曲を選んでください');
+  }
+  const entry: SongEntry = {
+    id: `audius-${track.id}`, title: track.title, artist: track.artist, link: track.link, duration: track.duration,
+    thumbnail: track.artwork, source: 'audius', lastPlayed: Date.now(),
+  };
+  return { entry, bytes };
+}
+
 export async function fromHistory(entry: SongEntry, status: Status): Promise<{ entry: SongEntry; bytes: ArrayBuffer }> {
+  if (entry.source === 'audius') {
+    const track = await fetchTrack(entry.id.replace(/^audius-/, '')).catch(() => null);
+    if (!track) throw new LoadError('この曲は Audius で再生できなくなりました');
+    return fromAudius(track, status);
+  }
   if (entry.source === 'file') {
     const bytes = await storage.getFile(entry.id);
     if (!bytes) throw new LoadError('保存された音声が見つかりません', 'ファイルをもう一度ドロップしてください');
@@ -104,6 +125,13 @@ export function runWorker(job: WorkerJob, status: Status): Promise<Analysis> {
 /** Cached analysis key: AI (stem-based) analyses are stored separately and preferred. */
 export const aiKey = (id: string) => `ai:${id}`;
 
+/**
+ * Audius API terms allow session-only caching: analyses of Audius tracks live in memory for this page session
+ * and are never written to IndexedDB.
+ */
+const sessionAnalyses = new Map<string, Analysis>();
+const sessionOnly = (e: SongEntry) => e.source === 'audius';
+
 export async function prepare(ctx: AudioContext, entry: SongEntry, bytes: ArrayBuffer, status: Status): Promise<LoadedSong> {
   status('デコード中…');
   let buffer: AudioBuffer;
@@ -114,12 +142,15 @@ export async function prepare(ctx: AudioContext, entry: SongEntry, bytes: ArrayB
   }
   entry = { ...entry, duration: buffer.duration };
   const fresh = (a?: Analysis) => (a && a.version === CHART_VERSION ? a : undefined);
-  let analysis = fresh(await storage.getAnalysis(aiKey(entry.id))) ?? fresh(await storage.getAnalysis(entry.id));
+  let analysis = sessionOnly(entry)
+    ? fresh(sessionAnalyses.get(entry.id))
+    : fresh(await storage.getAnalysis(aiKey(entry.id))) ?? fresh(await storage.getAnalysis(entry.id));
   if (!analysis) {
     status('解析の準備中…', 0);
     const mono = await toMono22k(buffer);
     analysis = await runWorker({ mode: 'mix', pcm: mono.getChannelData(0).slice(), sr: SR, seed: entry.id }, status);
-    await storage.putAnalysis(entry.id, analysis);
+    if (sessionOnly(entry)) sessionAnalyses.set(entry.id, analysis);
+    else await storage.putAnalysis(entry.id, analysis);
   }
   await storage.putSong(entry);
   return { entry, buffer, analysis };

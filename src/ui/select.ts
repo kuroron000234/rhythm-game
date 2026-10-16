@@ -4,6 +4,7 @@ import type { LoadedSong } from '../loader.ts';
 import type { Difficulty } from '../analysis/chart.ts';
 import { storage } from '../storage.ts';
 import { aiKind, watchAi } from '../aiJobs.ts';
+import { credit } from './credit.ts';
 
 const DIFFS: Difficulty[] = ['easy', 'normal', 'hard'];
 let lastDifficulty: Difficulty = 'normal';
@@ -39,7 +40,8 @@ export function showSelect(app: App, song: LoadedSong, go: { play: (d: Difficult
   else {
     if (analysis.source === 'neural') showBadge('AI 譜面 · ブラウザ内', 'ready');
     aiKind().then((which) => {
-      if (!which || left) return;
+      // Audius tracks stay in this session only (API terms), so they never go to the local AI server
+      if (!which || left || entry.source === 'audius') return;
       unwatch = watchAi(app.ctx, entry, analysis, which, (st) => {
         if (left) return;
         // with a local server, MuG still replaces the in-browser chart when it is ready
@@ -67,6 +69,7 @@ export function showSelect(app: App, song: LoadedSong, go: { play: (d: Difficult
     h('button.ghost.back', { onclick: go.back }, '← 戻る'),
     entry.thumbnail ? h('img.cover', { src: entry.thumbnail, alt: '' }) : null,
     h('h2.song-name', {}, entry.title),
+    credit(entry),
     h('div.muted', {}, `${fmtTime(analysis.duration)} · BPM ${analysis.bpm}`),
     aiBadge,
     analysis.gridReliable ? null : h('div.notice', {}, 'テンポが一定でないため、拍に揃えず音の立ち上がりに合わせた譜面にしています'),
